@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.21)
+project(bezier_surfaces VERSION 1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
+qt_standard_project_setup()
+
+qt_add_executable(bezier_surfaces
+        src/main.cpp
+)
+target_link_libraries(bezier_surfaces PRIVATE Qt6::Widgets)
+
+set_target_properties(bezier_surfaces PROPERTIES
+        WIN32_EXECUTABLE ON
+        MACOSX_BUNDLE ON
+)
