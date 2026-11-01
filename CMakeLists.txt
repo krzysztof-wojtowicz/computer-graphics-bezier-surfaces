@@ -9,7 +9,12 @@ qt_standard_project_setup()
 
 qt_add_executable(bezier_surfaces
         src/main.cpp
+        src/ui/MainWindow.cpp
+        src/ui/MainWindow.h
+        src/ui/Viewport.cpp
+        src/ui/Viewport.h
 )
+target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE Qt6::Widgets)
 
 set_target_properties(bezier_surfaces PROPERTIES
