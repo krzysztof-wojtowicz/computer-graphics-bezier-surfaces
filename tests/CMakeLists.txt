@@ -19,9 +19,12 @@ add_executable(core_tests
         math/Mat3Test.cpp
         geometry/BernsteinTest.cpp
         geometry/BezierSurfaceTest.cpp
+        geometry/SurfaceParserTest.cpp
 )
 target_include_directories(core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(core_tests PRIVATE bezier_core GTest::gtest_main)
+# Lets tests read the real data files shipped with the program
+target_compile_definitions(core_tests PRIVATE BEZIER_ASSETS_DIR="${PROJECT_SOURCE_DIR}/src/assets")
 bezier_set_warnings(core_tests)
 # Tests don't use Qt, skip the moc/uic steps added globally by qt_standard_project_setup()
 set_target_properties(core_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF)

@@ -25,6 +25,8 @@ add_library(bezier_core STATIC
         src/geometry/Bernstein.h
         src/geometry/BezierSurface.h
         src/geometry/BezierSurface.cpp
+        src/geometry/SurfaceParser.h
+        src/geometry/SurfaceParser.cpp
 )
 target_include_directories(bezier_core PUBLIC src)
 bezier_set_warnings(bezier_core)
@@ -37,9 +39,18 @@ qt_add_executable(bezier_surfaces
         src/ui/MainWindow.h
         src/ui/Viewport.cpp
         src/ui/Viewport.h
+        src/ui/SurfaceLoader.cpp
+        src/ui/SurfaceLoader.h
 )
 target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE bezier_core Qt6::Widgets)
+
+# Data files embedded in the executable, available as ":/assets/..." (BASE strips the "src/" prefix)
+qt_add_resources(bezier_surfaces "assets"
+        PREFIX "/"
+        BASE src
+        FILES src/assets/surfaces.txt
+)
 bezier_set_warnings(bezier_surfaces)
 
 set_target_properties(bezier_surfaces PROPERTIES
