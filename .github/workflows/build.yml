@@ -55,6 +55,7 @@ jobs:
           path: dist/
 
   # macOS: Qt from the official installer, packaged as .dmg with macdeployqt
+  # Qt 6.10+: earlier open-source releases link the AGL framework removed in the macOS 26 SDK
   macos:
     runs-on: macos-latest
     steps:
@@ -63,7 +64,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.*'
+          version: '6.10.*'
           cache: true
 
       - name: Configure
