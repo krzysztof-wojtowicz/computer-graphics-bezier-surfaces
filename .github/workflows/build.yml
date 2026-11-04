@@ -23,6 +23,9 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # Windows: MSVC + Qt from the official installer, packaged with windeployqt
   windows:
     runs-on: windows-latest
@@ -41,6 +44,9 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
 
       - name: Package
         run: |
@@ -72,6 +78,9 @@ jobs:
 
       - name: Build
         run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
 
       - name: Package
         run: macdeployqt build/bezier_surfaces.app -dmg

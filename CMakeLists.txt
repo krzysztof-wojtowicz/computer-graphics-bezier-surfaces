@@ -30,3 +30,10 @@ set_target_properties(bezier_surfaces PROPERTIES
         WIN32_EXECUTABLE ON
         MACOSX_BUNDLE ON
 )
+
+# Unit tests (GoogleTest, fetched at configure time)
+option(BEZIER_BUILD_TESTS "Build unit tests" ON)
+if(BEZIER_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
