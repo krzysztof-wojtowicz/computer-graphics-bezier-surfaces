@@ -1,9 +1,15 @@
 #include "ui/MainWindow.h"
+#include "ui/SurfaceLoader.h"
 #include "ui/Viewport.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
+#include <QStatusBar>
+#include <QTimer>
 #include <QVBoxLayout>
+
+#include <utility>
 
 /// Creates new MainWindow with the central widget with app content:
 /// - Viewport
@@ -29,4 +35,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setCentralWidget(central);
     setWindowTitle("Bezier Surfaces");
     resize(1100, 800);
+
+    loadDefaultSurfaces();
+}
+
+/// Loads the surfaces embedded in the executable. On error shows a message and continues with no surfaces.
+void MainWindow::loadDefaultSurfaces() {
+    ParseResult result = loadSurfaces(kDefaultSurfacesPath);
+
+    if (!result.ok()) {
+        const QString message = QString::fromStdString(result.error);
+        statusBar()->showMessage("Failed to load surfaces");
+        // Show the message after the event loop starts, so it appears on top of the already visible window
+        QTimer::singleShot(0, this, [this, message] {
+            QMessageBox::critical(this, "Failed to load surfaces", message);
+        });
+        return;
+    }
+
+    m_surfaces = std::move(result.surfaces);
+    statusBar()->showMessage(QString("Loaded %1 surfaces").arg(m_surfaces.size()));
 }
