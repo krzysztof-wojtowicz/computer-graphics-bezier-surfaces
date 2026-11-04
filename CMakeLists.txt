@@ -13,6 +13,8 @@ qt_add_executable(bezier_surfaces
         src/ui/MainWindow.h
         src/ui/Viewport.cpp
         src/ui/Viewport.h
+        src/math/Vec3.h
+        src/math/Mat3.h
 )
 target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE Qt6::Widgets)
