@@ -17,6 +17,13 @@ qt_add_executable(bezier_surfaces
 target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE Qt6::Widgets)
 
+# MSVC: source files are UTF-8 (Polish characters), clang/GCC assume it by default
+if(MSVC)
+    target_compile_options(bezier_surfaces PRIVATE /utf-8 /W4)
+else()
+    target_compile_options(bezier_surfaces PRIVATE -Wall -Wextra)
+endif()
+
 set_target_properties(bezier_surfaces PROPERTIES
         WIN32_EXECUTABLE ON
         MACOSX_BUNDLE ON

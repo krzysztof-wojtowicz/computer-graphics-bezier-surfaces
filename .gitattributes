@@ -1,0 +1,9 @@
+# Text files are stored with LF in the repository and converted
+# to the platform's native line endings on checkout
+* text=auto
+
+# Binary assets – never convert
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
