@@ -26,9 +26,9 @@ struct Mat3 {
         Mat3 res;
         res.m = {
             {
-                {c0.x, c1.y, c2.z},
-                {c0.x, c1.y, c2.z},
-                {c0.x, c1.y, c2.z}
+                {c0.x, c1.x, c2.x},
+                {c0.y, c1.y, c2.y},
+                {c0.z, c1.z, c2.z}
             }
         };
         return res;
