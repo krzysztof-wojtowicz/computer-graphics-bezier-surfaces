@@ -13,19 +13,18 @@ FetchContent_MakeAvailable(googletest)
 
 include(GoogleTest)
 
-add_executable(math_tests
+add_executable(core_tests
         math/TestUtils.h
         math/Vec3Test.cpp
         math/Mat3Test.cpp
+        geometry/BernsteinTest.cpp
+        geometry/BezierSurfaceTest.cpp
 )
-target_include_directories(math_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(math_tests PRIVATE GTest::gtest_main)
-
-if(MSVC)
-    target_compile_options(math_tests PRIVATE /utf-8 /W4)
-else()
-    target_compile_options(math_tests PRIVATE -Wall -Wextra)
-endif()
+target_include_directories(core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(core_tests PRIVATE bezier_core GTest::gtest_main)
+bezier_set_warnings(core_tests)
+# Tests don't use Qt, skip the moc/uic steps added globally by qt_standard_project_setup()
+set_target_properties(core_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF)
 
 # Registers every TEST() as a separate CTest test (also picked up by CLion's test runner)
-gtest_discover_tests(math_tests DISCOVERY_MODE POST_BUILD)
+gtest_discover_tests(core_tests DISCOVERY_MODE POST_BUILD)
