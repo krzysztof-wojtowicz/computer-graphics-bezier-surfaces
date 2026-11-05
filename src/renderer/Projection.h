@@ -11,7 +11,8 @@ struct ScreenPoint {
 
 class Projection {
 public:
-    // default scene radius,
+    // default scene radius, for x,y,z from range [-3, 3] -> all points
+    // will sit inside the sphere of a radius ~5.196
     static constexpr float kSceneRadius = 5.2f;
 
     /// Sets the center of the projection and scale (how many pixels one point represents)
