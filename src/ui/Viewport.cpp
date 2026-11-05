@@ -3,6 +3,8 @@
 #include <QPainter>
 #include <QColor>
 #include <QPointF>
+#include <QLineF>
+#include <QBrush>
 
 #include "renderer/MouseRotation.h"
 #include "renderer/Projection.h"
@@ -16,7 +18,7 @@ void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
     m_meshes.clear();
     m_meshes.reserve(surfaces.size());
 
-    for (auto &surf : surfaces) {
+    for (auto &surf: surfaces) {
         // Generate mesh
         m_meshes.emplace_back(surf, Mesh::kDefaultResolution);
         // Apply rotation
@@ -36,8 +38,7 @@ void Viewport::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
         m_lastMousePos = event->position().toPoint();
         setCursor(Qt::ClosedHandCursor);
-    }
-    else {
+    } else {
         QWidget::mousePressEvent(event);
     }
 }
@@ -78,15 +79,41 @@ void Viewport::render() {
 
     const auto proj = Projection(w, h);
 
-    // draw vertices of each mesh in the m_frame
+    // draw vertices and triangles of each mesh
     {
         QPainter painter(&m_frame);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::NoPen);
 
-        for (const auto &mesh : m_meshes) {
-            painter.setBrush(QColor(100, 30, 0));
-            for (const auto &v : mesh.vertices()) {
+        for (const auto &mesh: m_meshes) {
+            auto vertices = mesh.vertices();
+
+            // draw every triangle
+            painter.setPen(Qt::SolidLine);
+            painter.setBrush(QColor(0, 0, 200));
+            for (const auto &[v1, v2, v3]: mesh.triangles()) {
+                // a, b, c vertices of a triangle
+                const auto a = proj.project(vertices[v1].after.P);
+                const auto b = proj.project(vertices[v2].after.P);
+                const auto c = proj.project(vertices[v3].after.P);
+
+                // draw all three lines: ab, ac, bc
+                QLineF lines[3];
+                lines[0] = QLineF(
+                    QPointF(a.x, a.y),
+                    QPointF(b.x, b.y));
+                lines[1] = QLineF(
+                    QPointF(a.x, a.y),
+                    QPointF(c.x, c.y));
+                lines[2] = QLineF(
+                    QPointF(b.x, b.y),
+                    QPointF(c.x, c.y));
+                painter.drawLines(lines, 3);
+            }
+
+            // draw every vertex
+            painter.setBrush(QColor(200, 0, 0));
+            painter.setPen(Qt::NoPen);
+            for (const auto &v: vertices) {
                 const auto sp = proj.project(v.after.P);
                 painter.drawEllipse(QPointF(sp.x, sp.y), kPointRadius, kPointRadius);
             }
@@ -96,7 +123,7 @@ void Viewport::render() {
 
 /// Applies m_rotation to every mesh in m_meshes
 void Viewport::applyRotationToMeshes() {
-    for (auto &mesh : m_meshes) {
+    for (auto &mesh: m_meshes) {
         mesh.applyRotation(m_rotation);
     }
 }

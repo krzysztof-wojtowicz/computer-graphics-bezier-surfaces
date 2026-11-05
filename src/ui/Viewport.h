@@ -14,6 +14,7 @@ class Viewport : public QWidget {
 public:
     explicit Viewport(QWidget *parent = nullptr);
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
+    [[nodiscard]] const Mat3 &rotation() const { return m_rotation; }
 
 protected:
     void paintEvent(QPaintEvent *event) override;
