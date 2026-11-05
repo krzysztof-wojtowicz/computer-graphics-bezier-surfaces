@@ -21,10 +21,9 @@ void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
     for (auto &surf: surfaces) {
         // Generate mesh
         m_meshes.emplace_back(surf, Mesh::kDefaultResolution);
-        // Apply rotation
-        m_meshes.back().applyRotation(m_rotation);
     }
 
+    applyRotationToMeshes();
     render();
     update();
 }
@@ -85,11 +84,10 @@ void Viewport::render() {
         painter.setRenderHint(QPainter::Antialiasing);
 
         for (const auto &mesh: m_meshes) {
-            auto vertices = mesh.vertices();
+            const auto &vertices = mesh.vertices();
 
             // draw every triangle
             painter.setPen(Qt::SolidLine);
-            painter.setBrush(QColor(0, 0, 200));
             for (const auto &[v1, v2, v3]: mesh.triangles()) {
                 // a, b, c vertices of a triangle
                 const auto a = proj.project(vertices[v1].after.P);
