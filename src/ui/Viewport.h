@@ -6,6 +6,8 @@
 
 #include <QWidget>
 #include <QImage>
+#include <QPoint>
+#include <QMouseEvent>
 #include <vector>
 
 class Viewport : public QWidget {
@@ -16,6 +18,9 @@ public:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
     static constexpr int kPointRadius = 3;
@@ -24,6 +29,8 @@ private:
 
     QImage m_frame;
     std::vector<Mesh> m_meshes;
-    // Mat3 m_rotation = Mat3::identity();
     Mat3 m_rotation = rotationX(-1.0f) * rotationZ(0.5f);
+    QPoint m_lastMousePos;
+
+    void applyRotationToMeshes();
 };

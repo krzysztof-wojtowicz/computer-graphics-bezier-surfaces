@@ -30,6 +30,7 @@ add_library(bezier_core STATIC
         src/geometry/Mesh.h
         src/geometry/Mesh.cpp
         src/renderer/Projection.h
+        src/renderer/MouseRotation.h
 )
 target_include_directories(bezier_core PUBLIC src)
 bezier_set_warnings(bezier_core)

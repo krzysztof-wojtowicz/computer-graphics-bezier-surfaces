@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QPointF>
 
+#include "renderer/MouseRotation.h"
 #include "renderer/Projection.h"
 
 Viewport::Viewport(QWidget *parent) : QWidget(parent) {
@@ -29,6 +30,32 @@ void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
 void Viewport::resizeEvent(QResizeEvent *) {
     m_frame = QImage(size(), QImage::Format_RGB32);
     render();
+}
+
+void Viewport::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        m_lastMousePos = event->position().toPoint();
+        setCursor(Qt::ClosedHandCursor);
+    }
+    else {
+        QWidget::mousePressEvent(event);
+    }
+}
+
+void Viewport::mouseMoveEvent(QMouseEvent *event) {
+    if (event->buttons() & Qt::LeftButton) {
+        const auto pos = event->position().toPoint();
+        const auto delta = pos - m_lastMousePos;
+        m_lastMousePos = pos;
+        m_rotation = applyDrag(m_rotation, static_cast<float>(delta.x()), static_cast<float>(delta.y()));
+        applyRotationToMeshes();
+        render();
+        update();
+    }
+}
+
+void Viewport::mouseReleaseEvent(QMouseEvent *) {
+    unsetCursor();
 }
 
 void Viewport::paintEvent(QPaintEvent *) {
@@ -65,4 +92,11 @@ void Viewport::render() {
             }
         }
     } // destructor destroys painter and ends drawing on m_frame
+}
+
+/// Applies m_rotation to every mesh in m_meshes
+void Viewport::applyRotationToMeshes() {
+    for (auto &mesh : m_meshes) {
+        mesh.applyRotation(m_rotation);
+    }
 }
