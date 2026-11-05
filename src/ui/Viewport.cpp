@@ -1,6 +1,10 @@
 #include "ui/Viewport.h"
 
 #include <QPainter>
+#include <QColor>
+#include <QPointF>
+
+#include "renderer/Projection.h"
 
 Viewport::Viewport(QWidget *parent) : QWidget(parent) {
     setMinimumSize(400, 400);
@@ -32,19 +36,33 @@ void Viewport::paintEvent(QPaintEvent *) {
     painter.drawImage(0, 0, m_frame);
 }
 
-/// Renders image in the viewport
+/// Renders image in the viewport, <br>
+/// for now -> draws vertices of each mesh
 void Viewport::render() {
     if (m_frame.isNull()) return;
+
+    // fill viewport with white color
+    m_frame.fill(Qt::white);
+
+    if (m_meshes.empty()) return;
 
     const int w = m_frame.width();
     const int h = m_frame.height();
 
-    for (int row = 0; row < h; ++row) {
-        auto *line = reinterpret_cast<QRgb *>(m_frame.scanLine(row));
+    const auto proj = Projection(w, h);
 
-        // Draw white pixel
-        for (int col = 0; col < w; ++col) {
-            line[col] = qRgb(255, 255, 255);
+    // draw vertices of each mesh in the m_frame
+    {
+        QPainter painter(&m_frame);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+
+        for (const auto &mesh : m_meshes) {
+            painter.setBrush(QColor(100, 30, 0));
+            for (const auto &v : mesh.vertices()) {
+                const auto sp = proj.project(v.after.P);
+                painter.drawEllipse(QPointF(sp.x, sp.y), kPointRadius, kPointRadius);
+            }
         }
-    }
+    } // destructor destroys painter and ends drawing on m_frame
 }
