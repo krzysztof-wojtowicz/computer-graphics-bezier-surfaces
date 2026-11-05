@@ -7,7 +7,7 @@ Viewport::Viewport(QWidget *parent) : QWidget(parent) {
 }
 
 /// Generates mesh for each Bezier Surface
-void Viewport::setSurfaces(std::vector<BezierSurface> &surfaces) {
+void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
     m_meshes.clear();
     m_meshes.reserve(surfaces.size());
 

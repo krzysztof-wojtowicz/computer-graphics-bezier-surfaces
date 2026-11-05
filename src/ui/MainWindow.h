@@ -15,5 +15,5 @@ private:
     void loadDefaultSurfaces();
 
     std::vector<BezierSurface> m_surfaces;
-    Viewport *m_viewport;
+    Viewport *m_viewport = nullptr;
 };

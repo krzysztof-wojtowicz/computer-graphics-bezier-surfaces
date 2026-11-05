@@ -1,0 +1,8 @@
+//
+// Created by Krzysztof Wójtowicz on 05/11/2026.
+//
+
+#ifndef BEZIER_SURFACES_PROJECTION_H
+#define BEZIER_SURFACES_PROJECTION_H
+
+#endif //BEZIER_SURFACES_PROJECTION_H
