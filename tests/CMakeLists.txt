@@ -21,6 +21,7 @@ add_executable(core_tests
         geometry/BezierSurfaceTest.cpp
         geometry/SurfaceParserTest.cpp
         geometry/MeshTest.cpp
+        renderer/ProjectionTest.cpp
 )
 target_include_directories(core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(core_tests PRIVATE bezier_core GTest::gtest_main)
@@ -32,3 +33,23 @@ set_target_properties(core_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF)
 
 # Registers every TEST() as a separate CTest test (also picked up by CLion's test runner)
 gtest_discover_tests(core_tests DISCOVERY_MODE POST_BUILD)
+
+# ---------- ui_tests: Qt widgets (Viewport), rendered offscreen ----------
+# Viewport.cpp is compiled in directly (the ui/ classes are not a separate library).
+add_executable(ui_tests
+        ui/main.cpp
+        ui/ViewportTest.cpp
+        ${PROJECT_SOURCE_DIR}/src/ui/Viewport.cpp
+        ${PROJECT_SOURCE_DIR}/src/ui/Viewport.h
+)
+target_include_directories(ui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(ui_tests PRIVATE bezier_core Qt6::Widgets GTest::gtest)
+target_compile_definitions(ui_tests PRIVATE BEZIER_ASSETS_DIR="${PROJECT_SOURCE_DIR}/src/assets")
+bezier_set_warnings(ui_tests)
+
+# PRE_TEST: tests are listed when ctest runs, not after the build, so a missing Qt runtime
+# (e.g. DLLs not on PATH on Windows) can't break the build itself
+gtest_discover_tests(ui_tests
+        DISCOVERY_MODE PRE_TEST
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
