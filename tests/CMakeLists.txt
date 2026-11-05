@@ -22,6 +22,7 @@ add_executable(core_tests
         geometry/SurfaceParserTest.cpp
         geometry/MeshTest.cpp
         renderer/ProjectionTest.cpp
+        renderer/MouseRotationTest.cpp
 )
 target_include_directories(core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(core_tests PRIVATE bezier_core GTest::gtest_main)
@@ -42,7 +43,7 @@ add_executable(ui_tests
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.h
 )
-target_include_directories(ui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ui_tests PRIVATE bezier_core Qt6::Widgets GTest::gtest)
 target_compile_definitions(ui_tests PRIVATE BEZIER_ASSETS_DIR="${PROJECT_SOURCE_DIR}/src/assets")
 bezier_set_warnings(ui_tests)
