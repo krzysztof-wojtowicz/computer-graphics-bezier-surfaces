@@ -27,6 +27,8 @@ add_library(bezier_core STATIC
         src/geometry/BezierSurface.cpp
         src/geometry/SurfaceParser.h
         src/geometry/SurfaceParser.cpp
+        src/geometry/Mesh.h
+        src/geometry/Mesh.cpp
 )
 target_include_directories(bezier_core PUBLIC src)
 bezier_set_warnings(bezier_core)
