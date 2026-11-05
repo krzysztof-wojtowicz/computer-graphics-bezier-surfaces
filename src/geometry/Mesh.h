@@ -23,6 +23,7 @@ class Mesh {
 public:
     static constexpr int kMinResolution = 1;
     static constexpr int kMaxResolution = 50;
+    static constexpr int kDefaultResolution = 10;
 
     explicit Mesh(BezierSurface surface, int n);
 

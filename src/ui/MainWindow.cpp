@@ -1,6 +1,5 @@
 #include "ui/MainWindow.h"
 #include "ui/SurfaceLoader.h"
-#include "ui/Viewport.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -20,8 +19,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *layout = new QHBoxLayout(central);
 
     // Create new Viewport widget and add it to the layout
-    auto *viewport = new Viewport(central);
-    layout->addWidget(viewport, 1);
+    m_viewport = new Viewport(central);
+    layout->addWidget(m_viewport, 1);
 
     // Create side panel with fixed width and vertical layout
     auto *panel = new QWidget(central);
@@ -55,4 +54,6 @@ void MainWindow::loadDefaultSurfaces() {
 
     m_surfaces = std::move(result.surfaces);
     statusBar()->showMessage(QString("Loaded %1 surfaces").arg(m_surfaces.size()));
+
+    m_viewport->setSurfaces(m_surfaces);
 }
