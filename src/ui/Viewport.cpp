@@ -5,6 +5,7 @@
 #include <QPointF>
 #include <QLineF>
 #include <QPen>
+#include <cassert>
 
 #include "renderer/MouseRotation.h"
 #include "renderer/Projection.h"
@@ -13,6 +14,40 @@ Viewport::Viewport(QWidget *parent) : QWidget(parent) {
     setMinimumSize(400, 400);
 }
 
+void Viewport::setResolution(const int n) {
+    assert(n >= Mesh::kMinResolution && n <= Mesh::kMaxResolution && "n out of range!");
+    if (n == m_resolution) return;
+    m_resolution = n;
+
+    for (auto &mesh : m_meshes)
+        mesh.setResolution(n); // current rotation is kept by _lastRotation
+
+    render();
+    update();
+}
+
+void Viewport::setShowMesh(const bool show) {
+    m_showMesh = show;
+
+    render();
+    update();
+}
+
+void Viewport::setShowPolygon(const bool show) {
+    m_showPolygon = show;
+
+    render();
+    update();
+}
+
+void Viewport::setShowPoints(const bool show) {
+    m_showPoints = show;
+
+    render();
+    update();
+}
+
+
 /// Generates mesh for each Bezier Surface
 void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
     m_meshes.clear();
@@ -20,12 +55,17 @@ void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
 
     for (auto &surf: surfaces) {
         // Generate mesh
-        m_meshes.emplace_back(surf, Mesh::kDefaultResolution);
+        m_meshes.emplace_back(surf, m_resolution);
     }
 
     applyRotationToMeshes();
     render();
     update();
+}
+
+void Viewport::paintEvent(QPaintEvent *) {
+    QPainter painter(this);
+    painter.drawImage(0, 0, m_frame);
 }
 
 void Viewport::resizeEvent(QResizeEvent *) {
@@ -58,11 +98,6 @@ void Viewport::mouseReleaseEvent(QMouseEvent *) {
     unsetCursor();
 }
 
-void Viewport::paintEvent(QPaintEvent *) {
-    QPainter painter(this);
-    painter.drawImage(0, 0, m_frame);
-}
-
 /// Renders image in the viewport, <br>
 /// for now -> draws vertices of each mesh
 void Viewport::render() {
@@ -83,26 +118,24 @@ void Viewport::render() {
         painter.setRenderHint(QPainter::Antialiasing);
 
         // draw every triangle for every mesh
-        painter.setPen(QPen(QColor(100, 0, 0), 1, Qt::SolidLine));
-        for (const auto &mesh: m_meshes)
-            drawTriangles(proj, mesh, painter);
+        if (m_showMesh)
+            for (const auto &mesh: m_meshes)
+                drawTriangles(proj, mesh, painter);
 
         // draw bezier polygon for every mesh
-        painter.setPen(QPen(QColor(0, 0, 100), 1, Qt::DashLine));
-        for (const auto &mesh: m_meshes)
-            drawPolygon(proj, mesh, painter);
+        if (m_showPolygon)
+            for (const auto &mesh: m_meshes)
+                drawPolygon(proj, mesh, painter);
 
         // draw every mesh vertex for every mesh
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(200, 0, 0));
-        for (const auto &mesh: m_meshes)
-            drawVertices(proj, mesh, painter);
+        if (m_showPoints)
+            for (const auto &mesh: m_meshes)
+                drawVertices(proj, mesh, painter);
 
         // draw every Bezier surface control point
-        painter.setBrush(QColor(0, 0, 200));
-        for (const auto &mesh: m_meshes)
-            drawControlPoints(proj, mesh, painter);
-
+        if (m_showPolygon)
+            for (const auto &mesh: m_meshes)
+                drawControlPoints(proj, mesh, painter);
     } // destructor destroys painter and ends drawing on m_frame
 }
 
@@ -126,16 +159,20 @@ std::array<std::array<Vec3, 4>, 4> Viewport::surfaceControlPoints(const Mesh &me
 }
 
 void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter) {
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(200, 0, 0));
+
     for (const auto &vertices = mesh.vertices(); const auto &v: vertices) {
         const auto sp = proj.project(v.after.P);
         painter.drawEllipse(
             QPointF(sp.x, sp.y),
-            kPointRadius/2,
-            kPointRadius/2);
+            kPointRadius / 2,
+            kPointRadius / 2);
     }
 }
 
 void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter) {
+    painter.setPen(QPen(QColor(100, 0, 0), 1, Qt::SolidLine));
     const auto &vertices = mesh.vertices();
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         // a, b, c vertices of a triangle
@@ -159,6 +196,9 @@ void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter 
 }
 
 void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter) const {
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 200));
+
     // calculate control points projections
     std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
     const auto controlPoints = surfaceControlPoints(mesh);
@@ -166,15 +206,17 @@ void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPain
         for (int j = 0; j < 4; ++j)
             controlPointsProj[i][j] = proj.project(controlPoints[i][j]);
 
-    for (const auto &row : controlPointsProj) {
-        for (const auto &cp : row) {
+    for (const auto &row: controlPointsProj) {
+        for (const auto &cp: row) {
             painter.drawEllipse(QPointF(cp.x, cp.y), kPointRadius,
-                kPointRadius);
+                                kPointRadius);
         }
     }
 }
 
 void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter) const {
+    painter.setPen(QPen(QColor(0, 0, 100), 1, Qt::DashLine));
+
     // calculate control points projections
     std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
     const auto controlPoints = surfaceControlPoints(mesh);
@@ -189,16 +231,16 @@ void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &p
         for (int j = 0; j < 4; ++j) {
             const auto start = controlPointsProj[i][j];
             if (i + 1 < 4) {
-                const auto end = controlPointsProj[i+1][j];
+                const auto end = controlPointsProj[i + 1][j];
                 lines[idx++] = QLineF(
-                    QPointF(start.x , start.y),
+                    QPointF(start.x, start.y),
                     QPointF(end.x, end.y)
                 );
             }
             if (j + 1 < 4) {
-                const auto end = controlPointsProj[i][j+1];
+                const auto end = controlPointsProj[i][j + 1];
                 lines[idx++] = QLineF(
-                    QPointF(start.x , start.y),
+                    QPointF(start.x, start.y),
                     QPointF(end.x, end.y)
                 );
             }
@@ -206,5 +248,3 @@ void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &p
 
     painter.drawLines(lines, 24);
 }
-
-
