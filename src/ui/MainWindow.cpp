@@ -7,6 +7,7 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QSlider>
 
 #include <utility>
 
@@ -27,6 +28,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     panel->setFixedWidth(280);
     auto *panelLayout = new QVBoxLayout(panel);
     panelLayout->addWidget(new QLabel("Controls", panel));
+    auto *slider = new QSlider(panel);
+
     panelLayout->addStretch();
     layout->addWidget(panel);
 

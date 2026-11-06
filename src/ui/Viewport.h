@@ -2,6 +2,7 @@
 
 #include "geometry/Mesh.h"
 #include "math/Mat3.h"
+#include "math/Vec3.h"
 #include "geometry/BezierSurface.h"
 
 #include <QWidget>
@@ -9,6 +10,9 @@
 #include <QPoint>
 #include <QMouseEvent>
 #include <vector>
+#include <array>
+
+#include "renderer/Projection.h"
 
 class Viewport : public QWidget {
 public:
@@ -35,5 +39,11 @@ private:
 
     void applyRotationToMeshes();
 
-    std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
+    [[nodiscard]] std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
+
+    static void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter);
+
+    static void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter);
+    void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter) const;
+    void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter) const;
 };
