@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QSlider>
+#include <QCheckBox>
+#include <QGroupBox>
 
 #include <utility>
 
@@ -27,9 +29,36 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *panel = new QWidget(central);
     panel->setFixedWidth(280);
     auto *panelLayout = new QVBoxLayout(panel);
-    panelLayout->addWidget(new QLabel("Controls", panel));
-    auto *slider = new QSlider(panel);
 
+    auto *meshGroup = new QGroupBox("Triangulation", panel);
+    auto *meshLayout = new QVBoxLayout(meshGroup);
+    auto *resolutionLabel = new QLabel(meshGroup);
+    auto *resolutionSlider = new QSlider(Qt::Horizontal, meshGroup);
+    resolutionSlider->setRange(Mesh::kMinResolution, Mesh::kMaxResolution);
+    resolutionSlider->setValue(m_viewport->resolution());
+    resolutionLabel->setText(QString("Resolution n = %1").arg(m_viewport->resolution()));
+    meshLayout->addWidget(resolutionLabel);
+    meshLayout->addWidget(resolutionSlider);
+
+    connect(resolutionSlider, &QSlider::valueChanged, m_viewport, &Viewport::setResolution);
+    connect(resolutionSlider, &QSlider::valueChanged, resolutionLabel, [resolutionLabel](int n) {
+        resolutionLabel->setText(QString("Resolution n = %1").arg(n));
+    });
+
+    auto *displayGroup = new QGroupBox("Display", panel);
+    auto *displayLayout = new QVBoxLayout(displayGroup);
+    auto addToggle = [&](const QString &text, bool initial, void (Viewport::*setter)(bool)) {
+        auto *box = new QCheckBox(text, displayGroup);
+        box->setChecked(initial);
+        displayLayout->addWidget(box);
+        connect(box, &QCheckBox::toggled, m_viewport, setter);
+    };
+    addToggle("Bezier polygon", m_viewport->showPolygon(), &Viewport::setShowPolygon);
+    addToggle("Triangle mesh",  m_viewport->showMesh(),    &Viewport::setShowMesh);
+    addToggle("Mesh points",    m_viewport->showPoints(),  &Viewport::setShowPoints);
+
+    panelLayout->addWidget(meshGroup);
+    panelLayout->addWidget(displayGroup);
     panelLayout->addStretch();
     layout->addWidget(panel);
 
