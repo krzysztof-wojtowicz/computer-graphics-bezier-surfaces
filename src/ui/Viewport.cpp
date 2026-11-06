@@ -4,7 +4,7 @@
 #include <QColor>
 #include <QPointF>
 #include <QLineF>
-#include <QBrush>
+#include <array>
 
 #include "renderer/MouseRotation.h"
 #include "renderer/Projection.h"
@@ -108,12 +108,49 @@ void Viewport::render() {
                 painter.drawLines(lines, 3);
             }
 
-            // draw every vertex
-            painter.setBrush(QColor(200, 0, 0));
+            // calculate projections of bezier surface control points
+            std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
+            auto controlPoints = surfaceControlPoints(mesh);
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j)
+                    controlPointsProj[i][j] = proj.project(controlPoints[i][j]);
+
+            // draw bezier polygon
+            painter.setPen(Qt::DashLine);
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j) {
+                    const auto start = controlPointsProj[i][j];
+                    if (i + 1 < 4) {
+                        const auto end = controlPointsProj[i+1][j];
+                        painter.drawLine(QLineF(
+                            QPointF(start.x , start.y),
+                            QPointF(end.x, end.y)
+                        ));
+                    }
+                    if (j + 1 < 4) {
+                        const auto end = controlPointsProj[i][j+1];
+                        painter.drawLine(QLineF(
+                            QPointF(start.x , start.y),
+                            QPointF(end.x, end.y)
+                        ));
+                    }
+                }
+
+            // draw every mesh vertex
             painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(200, 0, 0));
             for (const auto &v: vertices) {
                 const auto sp = proj.project(v.after.P);
-                painter.drawEllipse(QPointF(sp.x, sp.y), kPointRadius, kPointRadius);
+                painter.drawEllipse(QPointF(sp.x, sp.y), kPointRadius/2, kPointRadius/2);
+            }
+
+            // draw every Bezier surface control point
+            painter.setBrush(QColor(0, 0, 200));
+            for (const auto &row : controlPointsProj) {
+                for (const auto &cp : row) {
+                    painter.drawEllipse(QPointF(cp.x, cp.y), kPointRadius,
+                        kPointRadius);
+                }
             }
         }
     } // destructor destroys painter and ends drawing on m_frame
@@ -124,4 +161,16 @@ void Viewport::applyRotationToMeshes() {
     for (auto &mesh: m_meshes) {
         mesh.applyRotation(m_rotation);
     }
+}
+
+/// Calculates control points of the bezier surface for a given mesh
+std::array<std::array<Vec3, 4>, 4> Viewport::surfaceControlPoints(const Mesh &mesh) const {
+    std::array<std::array<Vec3, 4>, 4> controlPoints = {};
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            controlPoints[i][j] = m_rotation * mesh.surface().controlPoint(i, j);
+        }
+    }
+
+    return controlPoints;
 }

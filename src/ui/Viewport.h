@@ -24,7 +24,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
-    static constexpr int kPointRadius = 3;
+    static constexpr float kPointRadius = 3;
 
     void render();
 
@@ -34,4 +34,6 @@ private:
     QPoint m_lastMousePos;
 
     void applyRotationToMeshes();
+
+    std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
 };

@@ -32,6 +32,7 @@ public:
     // Getters
     [[nodiscard]] const std::vector<Vertex> &vertices() const { return _vertices; }
     [[nodiscard]] const std::vector<Triangle> &triangles() const { return _triangles; }
+    [[nodiscard]] const BezierSurface &surface() const { return _surface; }
     [[nodiscard]] int resolution() const { return _n; }
 
     // Setters
