@@ -45,6 +45,17 @@ protected:
 private:
     // --- CONST ---
     static constexpr float kPointRadius = 3;
+    static constexpr int kColorCount = 3;
+    static constexpr QColor kMeshColors[kColorCount] = {
+        QColor(100, 0, 0),
+        QColor(0, 100, 0),
+        QColor(0, 0, 100)
+    };
+    static constexpr QColor kPolygonColors[kColorCount] = {
+        QColor(200, 0, 0),
+        QColor(0, 200, 0),
+        QColor(0, 0, 200)
+    };
 
     // --- STATES ---
     QImage m_frame;
@@ -64,8 +75,8 @@ private:
     [[nodiscard]] std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
 
     // --- DRAWING HELPERS ---
-    static void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter);
-    static void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter);
-    void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter) const;
-    void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter) const;
+    static void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx);
+    static void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx);
+    void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const;
+    void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const;
 };

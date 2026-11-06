@@ -118,24 +118,42 @@ void Viewport::render() {
         painter.setRenderHint(QPainter::Antialiasing);
 
         // draw every triangle for every mesh
-        if (m_showMesh)
-            for (const auto &mesh: m_meshes)
-                drawTriangles(proj, mesh, painter);
+        if (m_showMesh) {
+            int idx = 0;
+            for (const auto &mesh: m_meshes) {
+                drawTriangles(proj, mesh, painter, idx);
+                idx = ++idx % kColorCount;
+            }
+        }
+
 
         // draw bezier polygon for every mesh
-        if (m_showPolygon)
-            for (const auto &mesh: m_meshes)
-                drawPolygon(proj, mesh, painter);
+        if (m_showPolygon) {
+            int idx = 0;
+            for (const auto &mesh: m_meshes) {
+                drawPolygon(proj, mesh, painter, idx);
+                idx = ++idx % kColorCount;
+            }
+        }
 
         // draw every mesh vertex for every mesh
-        if (m_showPoints)
-            for (const auto &mesh: m_meshes)
-                drawVertices(proj, mesh, painter);
+        if (m_showPoints) {
+            int idx = 0;
+            for (const auto &mesh: m_meshes) {
+                drawVertices(proj, mesh, painter, idx);
+                idx = ++idx % kColorCount;
+            }
+        }
 
         // draw every Bezier surface control point
-        if (m_showPolygon)
-            for (const auto &mesh: m_meshes)
-                drawControlPoints(proj, mesh, painter);
+        if (m_showPolygon) {
+            int idx = 0;
+            for (const auto &mesh: m_meshes) {
+                drawControlPoints(proj, mesh, painter, idx);
+                idx = ++idx % kColorCount;
+            }
+        }
+
     } // destructor destroys painter and ends drawing on m_frame
 }
 
@@ -158,9 +176,9 @@ std::array<std::array<Vec3, 4>, 4> Viewport::surfaceControlPoints(const Mesh &me
     return controlPoints;
 }
 
-void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter) {
+void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) {
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(200, 0, 0));
+    painter.setBrush(kMeshColors[colorIdx]);
 
     for (const auto &vertices = mesh.vertices(); const auto &v: vertices) {
         const auto sp = proj.project(v.after.P);
@@ -171,8 +189,8 @@ void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &
     }
 }
 
-void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter) {
-    painter.setPen(QPen(QColor(100, 0, 0), 1, Qt::SolidLine));
+void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) {
+    painter.setPen(QPen(kMeshColors[colorIdx], 1, Qt::SolidLine));
     const auto &vertices = mesh.vertices();
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         // a, b, c vertices of a triangle
@@ -195,9 +213,9 @@ void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter 
     }
 }
 
-void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter) const {
+void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 200));
+    painter.setBrush(kPolygonColors[colorIdx]);
 
     // calculate control points projections
     std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
@@ -214,8 +232,8 @@ void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPain
     }
 }
 
-void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter) const {
-    painter.setPen(QPen(QColor(0, 0, 100), 1, Qt::DashLine));
+void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
+    painter.setPen(QPen(kPolygonColors[colorIdx], 1, Qt::DashLine));
 
     // calculate control points projections
     std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
