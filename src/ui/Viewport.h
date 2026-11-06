@@ -20,6 +20,7 @@ public:
 
     // --- GETTERS ---
     [[nodiscard]] const Mat3 &rotation() const { return m_rotation; }
+    [[nodiscard]] const std::vector<Mesh> &meshes() const { return m_meshes; }
     [[nodiscard]] int resolution() const { return m_resolution; }
     [[nodiscard]] bool showMesh() const { return m_showMesh; }
     [[nodiscard]] bool showPolygon() const { return m_showPolygon; }

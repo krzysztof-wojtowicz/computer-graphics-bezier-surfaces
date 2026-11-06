@@ -36,12 +36,23 @@ set_target_properties(core_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF)
 gtest_discover_tests(core_tests DISCOVERY_MODE POST_BUILD)
 
 # ---------- ui_tests: Qt widgets (Viewport), rendered offscreen ----------
-# Viewport.cpp is compiled in directly (the ui/ classes are not a separate library).
+# The ui/ sources are compiled in directly (the ui/ classes are not a separate library).
 add_executable(ui_tests
         ui/main.cpp
         ui/ViewportTest.cpp
+        ui/MainWindowTest.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.h
+        ${PROJECT_SOURCE_DIR}/src/ui/MainWindow.cpp
+        ${PROJECT_SOURCE_DIR}/src/ui/MainWindow.h
+        ${PROJECT_SOURCE_DIR}/src/ui/SurfaceLoader.cpp
+        ${PROJECT_SOURCE_DIR}/src/ui/SurfaceLoader.h
+)
+# MainWindow loads :/assets/surfaces.txt at startup, like the program
+qt_add_resources(ui_tests "test_assets"
+        PREFIX "/"
+        BASE ${PROJECT_SOURCE_DIR}/src
+        FILES ${PROJECT_SOURCE_DIR}/src/assets/surfaces.txt
 )
 target_include_directories(ui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ui_tests PRIVATE bezier_core Qt6::Widgets GTest::gtest)

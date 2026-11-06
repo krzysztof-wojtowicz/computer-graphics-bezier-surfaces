@@ -1,4 +1,4 @@
-// Black-box tests of Viewport (stages 4.1-4.6): the widget is rendered with QWidget::grab()
+// Black-box tests of Viewport (stages 4.1-4.7): the widget is rendered with QWidget::grab()
 // and the resulting image is inspected. Expected positions are computed from Viewport::rotation(),
 // so the tests don't depend on the initial rotation chosen in Viewport.
 
@@ -65,6 +65,19 @@ std::vector<BezierSurface> assetSurfaces() {
 QImage renderViewport(Viewport &viewport, const QSize &size) {
     viewport.resize(size);
     return viewport.grab().toImage().convertToFormat(QImage::Format_RGB32);
+}
+
+QImage grabImage(Viewport &viewport) {
+    return viewport.grab().toImage().convertToFormat(QImage::Format_RGB32);
+}
+
+/// Shows the viewport (offscreen) and returns its image. grab() of a hidden widget sends it a resizeEvent,
+/// which calls render() itself; a shown widget only gets paintEvent, so later grabs reveal a setter that forgot render()
+QImage showViewport(Viewport &viewport, const QSize &size) {
+    viewport.resize(size);
+    viewport.show();
+    QCoreApplication::processEvents();
+    return grabImage(viewport);
 }
 
 bool isWhite(const QImage &img, const int x, const int y) {
@@ -442,11 +455,24 @@ BezierSurface flatSquare() {
     return BezierSurface(g);
 }
 
-Vec3 gridPoint(const int i, const int j) {
-    const auto n = static_cast<float>(Mesh::kDefaultResolution);
-    return {.x = -kHalfSide + 2.0f * kHalfSide * static_cast<float>(i) / n,
-            .y = -kHalfSide + 2.0f * kHalfSide * static_cast<float>(j) / n,
+/// Mesh vertex (i, j) of flatSquare() at resolution n
+Vec3 gridPoint(const int i, const int j, const int n = Mesh::kDefaultResolution) {
+    const auto fn = static_cast<float>(n);
+    return {.x = -kHalfSide + 2.0f * kHalfSide * static_cast<float>(i) / fn,
+            .y = -kHalfSide + 2.0f * kHalfSide * static_cast<float>(j) / fn,
             .z = 0.0f};
+}
+
+/// Control point P[i][j] of flatSquare()
+Vec3 controlPointOfFlatSquare(const int i, const int j) {
+    return gridPoint(i, j, 3);
+}
+
+/// Viewport with only the triangle mesh visible, so every drawn pixel belongs to a mesh line
+void showOnlyMesh(Viewport &viewport) {
+    viewport.setShowMesh(true);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(false);
 }
 
 QPointF screenPoint(const Viewport &viewport, const Vec3 &p) {
@@ -454,16 +480,13 @@ QPointF screenPoint(const Viewport &viewport, const Vec3 &p) {
     return {sp.x, sp.y};
 }
 
-/// A gray/black pixel (a mesh line), not white and not a colored vertex dot, in the 3x3 neighbourhood of p
+/// A drawn (non-white) pixel in the 3x3 neighbourhood of p. Callers hide the layers they don't check.
 bool lineNear(const QImage &img, const QPointF &p) {
     const int px = static_cast<int>(p.x()), py = static_cast<int>(p.y());
     for (int y = py - 1; y <= py + 1; ++y)
-        for (int x = px - 1; x <= px + 1; ++x) {
-            const QColor c = img.pixelColor(x, y);
-            const bool gray = std::abs(c.red() - c.green()) < 40 && std::abs(c.red() - c.blue()) < 40;
-            if (gray && c.red() < 200)
+        for (int x = px - 1; x <= px + 1; ++x)
+            if (img.rect().contains(x, y) && !isWhite(img, x, y))
                 return true;
-        }
     return false;
 }
 
@@ -494,6 +517,7 @@ void expectCellDrawnAsTwoTriangles(const Viewport &viewport, const QImage &img, 
 
 TEST(ViewportMeshTest, CellsAreDrawnAsOutlinedTriangles) {
     Viewport viewport;
+    showOnlyMesh(viewport);
     viewport.setSurfaces({flatSquare()});
     const QImage img = renderViewport(viewport, kMeshImageSize);
     for (const auto &[i, j] : {std::pair{0, 0}, std::pair{4, 5}, std::pair{9, 9}, std::pair{2, 7}})
@@ -502,6 +526,7 @@ TEST(ViewportMeshTest, CellsAreDrawnAsOutlinedTriangles) {
 
 TEST(ViewportMeshTest, TriangleEdgesFollowRotation) {
     Viewport viewport;
+    showOnlyMesh(viewport);
     viewport.setSurfaces({flatSquare()});
     renderViewport(viewport, kMeshImageSize);
     drag(viewport, {100, 100}, {150, 70});
@@ -523,3 +548,273 @@ TEST(ViewportMeshTest, NothingIsDrawnOutsideTheMesh) {
     ASSERT_TRUE(img.rect().contains(outside.toPoint()));
     EXPECT_TRUE(isWhite(img, static_cast<int>(outside.x()), static_cast<int>(outside.y())));
 }
+
+// ---------- 4.6: Bezier polygon and drawing order ----------
+
+namespace {
+/// Some pixel within `radius` px of p along the segment direction is drawn: dashed lines have gaps,
+/// so a single sample at the midpoint may land in one of them
+bool dashedLineNear(const QImage &img, const QPointF &p, const QPointF &dir, const double radius = 6.0) {
+    const double len = std::hypot(dir.x(), dir.y());
+    for (double t = -radius; t <= radius; t += 1.0)
+        if (lineNear(img, p + (t / len) * dir))
+            return true;
+    return false;
+}
+
+bool isBlueish(const QColor &c) {
+    return c.blue() > 120 && c.blue() > c.red() + 60 && c.blue() > c.green() + 60;
+}
+
+bool isReddish(const QColor &c) {
+    return c.red() > 120 && c.red() > c.green() + 60 && c.red() > c.blue() + 60;
+}
+
+QColor colorAt(const QImage &img, const QPointF &p) {
+    return img.pixelColor(static_cast<int>(p.x()), static_cast<int>(p.y()));
+}
+
+void showOnlyPolygon(Viewport &viewport) {
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(true);
+    viewport.setShowPoints(false);
+}
+
+void showOnlyPoints(Viewport &viewport) {
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(true);
+}
+
+/// All 24 edges P[i][j]-P[i+1][j] and P[i][j]-P[i][j+1] are drawn, the diagonals P[i][j]-P[i+1][j+1] are not
+void expectPolygonDrawn(const Viewport &viewport, const QImage &img) {
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+            const QPointF p = screenPoint(viewport, controlPointOfFlatSquare(i, j));
+            if (i + 1 < 4) {
+                const QPointF q = screenPoint(viewport, controlPointOfFlatSquare(i + 1, j));
+                EXPECT_TRUE(dashedLineNear(img, midpoint(p, q), q - p)) << "edge P" << i << j << "-P" << i + 1 << j;
+            }
+            if (j + 1 < 4) {
+                const QPointF q = screenPoint(viewport, controlPointOfFlatSquare(i, j + 1));
+                EXPECT_TRUE(dashedLineNear(img, midpoint(p, q), q - p)) << "edge P" << i << j << "-P" << i << j + 1;
+            }
+            if (i + 1 < 4 && j + 1 < 4) {
+                const QPointF q = screenPoint(viewport, controlPointOfFlatSquare(i + 1, j + 1));
+                EXPECT_FALSE(lineNear(img, midpoint(p, q))) << "unexpected diagonal from P" << i << j;
+            }
+        }
+}
+} // namespace
+
+TEST(ViewportPolygonTest, AllPolygonEdgesAreDrawnWithoutDiagonals) {
+    Viewport viewport;
+    showOnlyPolygon(viewport);
+    viewport.setSurfaces({flatSquare()});
+    expectPolygonDrawn(viewport, renderViewport(viewport, kMeshImageSize));
+}
+
+TEST(ViewportPolygonTest, PolygonFollowsRotation) {
+    Viewport viewport;
+    showOnlyPolygon(viewport);
+    viewport.setSurfaces({flatSquare()});
+    renderViewport(viewport, kMeshImageSize);
+    drag(viewport, {100, 100}, {160, 140});
+    expectPolygonDrawn(viewport, viewport.grab().toImage().convertToFormat(QImage::Format_RGB32));
+}
+
+TEST(ViewportPolygonTest, ControlPointsAreDrawnAsBlueDots) {
+    Viewport viewport;
+    showOnlyPolygon(viewport);
+    viewport.setSurfaces({flatSquare()});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, controlPointOfFlatSquare(i, j)))))
+                    << "control point P" << i << j;
+}
+
+TEST(ViewportPolygonTest, ControlPointsUseTheirOwnPositionsNotMeshVertices) {
+    // Lifting one inner control point moves only the polygon: P11 is drawn where it is, above the flat mesh
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = controlPointOfFlatSquare(i, j);
+    g[1][1].z = 3.0f;
+    Viewport viewport;
+    showOnlyPolygon(viewport);
+    viewport.setSurfaces({BezierSurface(g)});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, g[1][1]))));
+}
+
+TEST(ViewportPolygonTest, PointsOfOneSurfaceAreDrawnOverMeshOfAnother) {
+    // Layers go over all meshes at once (mesh, polygon, points), so the control points of the first surface
+    // stay on top of the triangle edges of the second one. The point lies on the middle of an edge a-b.
+    const Vec3 onEdge = 0.5f * (gridPoint(4, 5) + gridPoint(5, 5));
+    Viewport viewport;
+    viewport.setSurfaces({pointSurface(onEdge), flatSquare()});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, onEdge))));
+}
+
+// ---------- 4.7: display flags and resolution ----------
+
+TEST(ViewportControlsTest, DefaultsShowEverythingAtDefaultResolution) {
+    const Viewport viewport;
+    EXPECT_TRUE(viewport.showMesh());
+    EXPECT_TRUE(viewport.showPolygon());
+    EXPECT_TRUE(viewport.showPoints());
+    EXPECT_EQ(viewport.resolution(), Mesh::kDefaultResolution);
+}
+
+TEST(ViewportControlsTest, SettersUpdateFlags) {
+    Viewport viewport;
+    viewport.setShowMesh(false);
+    EXPECT_FALSE(viewport.showMesh());
+    viewport.setShowPolygon(false);
+    EXPECT_FALSE(viewport.showPolygon());
+    viewport.setShowPoints(false);
+    EXPECT_FALSE(viewport.showPoints());
+    viewport.setShowMesh(true);
+    EXPECT_TRUE(viewport.showMesh());
+    EXPECT_FALSE(viewport.showPolygon());
+    EXPECT_FALSE(viewport.showPoints());
+}
+
+TEST(ViewportControlsTest, HidingAllLayersGivesWhiteImage) {
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    ASSERT_FALSE(drawnPixels(showViewport(viewport, {500, 500})).empty());
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(false);
+    EXPECT_TRUE(drawnPixels(grabImage(viewport)).empty());
+}
+
+TEST(ViewportControlsTest, EveryLayerAloneDrawsSomething) {
+    for (auto *show : {&showOnlyMesh, &showOnlyPolygon, &showOnlyPoints}) {
+        Viewport viewport;
+        show(viewport);
+        viewport.setSurfaces({flatSquare()});
+        EXPECT_FALSE(drawnPixels(renderViewport(viewport, kMeshImageSize)).empty());
+    }
+}
+
+TEST(ViewportControlsTest, HiddenMeshLeavesEdgesWhite) {
+    Viewport viewport;
+    viewport.setSurfaces({flatSquare()});
+    const QPointF ab = midpoint(screenPoint(viewport, gridPoint(4, 5)), screenPoint(viewport, gridPoint(5, 5)));
+    ASSERT_TRUE(lineNear(showViewport(viewport, kMeshImageSize), ab));
+    viewport.setShowMesh(false);
+    const QImage img = grabImage(viewport);
+    EXPECT_FALSE(lineNear(img, ab));
+    // the other layers are still there
+    EXPECT_TRUE(isReddish(colorAt(img, screenPoint(viewport, gridPoint(4, 5)))));
+    EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, controlPointOfFlatSquare(1, 2)))));
+}
+
+TEST(ViewportControlsTest, HiddenPolygonHidesControlPoints) {
+    Viewport viewport;
+    showOnlyPolygon(viewport);
+    viewport.setSurfaces({flatSquare()});
+    ASSERT_FALSE(drawnPixels(showViewport(viewport, kMeshImageSize)).empty());
+    viewport.setShowPolygon(false);
+    EXPECT_TRUE(drawnPixels(grabImage(viewport)).empty());
+}
+
+TEST(ViewportControlsTest, PointsAreRedDotsInMeshVertices) {
+    Viewport viewport;
+    showOnlyPoints(viewport);
+    viewport.setSurfaces({flatSquare()});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    for (const auto &[i, j] : {std::pair{0, 0}, std::pair{3, 7}, std::pair{10, 10}, std::pair{5, 0}})
+        EXPECT_TRUE(isReddish(colorAt(img, screenPoint(viewport, gridPoint(i, j))))) << "vertex " << i << ", " << j;
+    // between vertices nothing is drawn
+    EXPECT_FALSE(lineNear(img, midpoint(screenPoint(viewport, gridPoint(4, 5)), screenPoint(viewport, gridPoint(5, 5)))));
+}
+
+TEST(ViewportControlsTest, ToggledLayerBackOnRestoresImage) {
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    const QImage before = showViewport(viewport, {500, 500});
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(false);
+    ASSERT_NE(grabImage(viewport), before);
+    viewport.setShowMesh(true);
+    viewport.setShowPolygon(true);
+    viewport.setShowPoints(true);
+    EXPECT_EQ(grabImage(viewport), before);
+}
+
+TEST(ViewportResolutionTest, SetResolutionRetriangulatesEveryMesh) {
+    Viewport viewport;
+    viewport.setSurfaces({flatSquare(), pointSurface({1.0f, 2.0f, 0.0f})});
+    for (const int n : {Mesh::kMinResolution, 3, 17, Mesh::kMaxResolution}) {
+        viewport.setResolution(n);
+        EXPECT_EQ(viewport.resolution(), n);
+        for (const Mesh &mesh : viewport.meshes()) {
+            EXPECT_EQ(mesh.resolution(), n);
+            EXPECT_EQ(mesh.vertices().size(), static_cast<size_t>((n + 1) * (n + 1)));
+            EXPECT_EQ(mesh.triangles().size(), static_cast<size_t>(2 * n * n));
+        }
+    }
+}
+
+TEST(ViewportResolutionTest, ResolutionSetBeforeSurfacesIsUsedForNewMeshes) {
+    Viewport viewport;
+    viewport.setResolution(4);
+    viewport.setSurfaces({flatSquare()});
+    ASSERT_EQ(viewport.meshes().size(), 1u);
+    EXPECT_EQ(viewport.meshes()[0].resolution(), 4);
+    // and it stays when the surfaces are replaced
+    viewport.setSurfaces(assetSurfaces());
+    for (const Mesh &mesh : viewport.meshes())
+        EXPECT_EQ(mesh.resolution(), 4);
+}
+
+TEST(ViewportResolutionTest, SetResolutionKeepsCurrentRotation) {
+    Viewport viewport;
+    viewport.setSurfaces({flatSquare()});
+    renderViewport(viewport, kMeshImageSize);
+    drag(viewport, {100, 100}, {170, 60});
+    viewport.setResolution(7);
+    for (const Vertex &v : viewport.meshes()[0].vertices())
+        EXPECT_VEC3_EQ(v.after.P, viewport.rotation() * v.before.P);
+}
+
+TEST(ViewportResolutionTest, SetResolutionRedrawsLikeFreshViewport) {
+    Viewport changed;
+    changed.setSurfaces({flatSquare()});
+    showViewport(changed, kMeshImageSize);
+    changed.setResolution(4);
+    const QImage img = grabImage(changed);
+
+    Viewport fresh;
+    fresh.setResolution(4);
+    fresh.setSurfaces({flatSquare()});
+    EXPECT_EQ(img, renderViewport(fresh, kMeshImageSize));
+}
+
+TEST(ViewportResolutionTest, VerticesAreDrawnAtNewResolution) {
+    Viewport viewport;
+    showOnlyPoints(viewport);
+    viewport.setSurfaces({flatSquare()});
+    showViewport(viewport, kMeshImageSize);
+    viewport.setResolution(2);
+    const QImage img = grabImage(viewport);
+    EXPECT_TRUE(isReddish(colorAt(img, screenPoint(viewport, gridPoint(1, 1, 2)))));
+    // vertex (1, 0) at n = 10 is gone
+    EXPECT_TRUE(isWhite(img, static_cast<int>(screenPoint(viewport, gridPoint(1, 0)).x()),
+                        static_cast<int>(screenPoint(viewport, gridPoint(1, 0)).y())));
+}
+
+#if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
+TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
+    GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setResolution(Mesh::kMinResolution - 1), "out of range");
+    EXPECT_DEATH(viewport.setResolution(Mesh::kMaxResolution + 1), "out of range");
+}
+#endif
