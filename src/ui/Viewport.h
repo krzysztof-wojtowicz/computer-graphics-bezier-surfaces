@@ -13,6 +13,7 @@
 #include <array>
 
 #include "renderer/Projection.h"
+#include "renderer/Rasterizer.h"
 
 class Viewport : public QWidget {
 public:
@@ -25,12 +26,14 @@ public:
     [[nodiscard]] bool showMesh() const { return m_showMesh; }
     [[nodiscard]] bool showPolygon() const { return m_showPolygon; }
     [[nodiscard]] bool showPoints() const { return m_showPoints; }
+    [[nodiscard]] bool showFill() const { return m_showFill; }
 
     // --- SETTERS ---
     void setResolution(int n);
     void setShowMesh(bool show);
     void setShowPolygon(bool show);
     void setShowPoints(bool show);
+    void setShowFill(bool show);
 
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
 
@@ -56,6 +59,11 @@ private:
         QColor(0, 200, 0),
         QColor(0, 0, 200)
     };
+    static constexpr QColor kFillColors[kColorCount] = {
+        QColor(255, 133, 133),
+        QColor(133, 255, 133),
+        QColor(133, 133, 255)
+    };
 
     // --- STATES ---
     QImage m_frame;
@@ -67,6 +75,7 @@ private:
     bool m_showMesh = true;
     bool m_showPolygon = true;
     bool m_showPoints = true;
+    bool m_showFill = true;
 
     // --- RENDERING ---
     void render();
@@ -75,8 +84,9 @@ private:
     [[nodiscard]] std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
 
     // --- DRAWING HELPERS ---
-    static void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx);
-    static void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx);
-    void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const;
-    void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const;
+    static void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx);
+    static void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx);
+    void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
+    void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
+    void fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, int colorIdx);
 };

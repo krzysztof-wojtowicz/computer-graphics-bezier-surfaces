@@ -56,6 +56,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addToggle("Bezier polygon", m_viewport->showPolygon(), &Viewport::setShowPolygon);
     addToggle("Triangle mesh",  m_viewport->showMesh(),    &Viewport::setShowMesh);
     addToggle("Mesh points",    m_viewport->showPoints(),  &Viewport::setShowPoints);
+    addToggle("Triangle fill", m_viewport->showFill(), &Viewport::setShowFill);
 
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);

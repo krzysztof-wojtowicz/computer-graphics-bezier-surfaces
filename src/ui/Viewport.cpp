@@ -8,7 +8,6 @@
 #include <cassert>
 
 #include "renderer/MouseRotation.h"
-#include "renderer/Projection.h"
 
 Viewport::Viewport(QWidget *parent) : QWidget(parent) {
     setMinimumSize(400, 400);
@@ -19,7 +18,7 @@ void Viewport::setResolution(const int n) {
     if (n == m_resolution) return;
     m_resolution = n;
 
-    for (auto &mesh : m_meshes)
+    for (auto &mesh: m_meshes)
         mesh.setResolution(n); // current rotation is kept by _lastRotation
 
     render();
@@ -42,6 +41,13 @@ void Viewport::setShowPolygon(const bool show) {
 
 void Viewport::setShowPoints(const bool show) {
     m_showPoints = show;
+
+    render();
+    update();
+}
+
+void Viewport::setShowFill(const bool show) {
+    m_showFill = show;
 
     render();
     update();
@@ -117,6 +123,16 @@ void Viewport::render() {
         QPainter painter(&m_frame);
         painter.setRenderHint(QPainter::Antialiasing);
 
+        // fill triangles
+        if (m_showFill) {
+            const auto raster = Rasterizer(w, h);
+            int idx = 0;
+            for (const auto &mesh : m_meshes) {
+                fillTriangles(proj, mesh, raster, idx);
+                idx = ++idx % kColorCount;
+            }
+        }
+
         // draw every triangle for every mesh
         if (m_showMesh) {
             int idx = 0;
@@ -125,7 +141,6 @@ void Viewport::render() {
                 idx = ++idx % kColorCount;
             }
         }
-
 
         // draw bezier polygon for every mesh
         if (m_showPolygon) {
@@ -153,7 +168,6 @@ void Viewport::render() {
                 idx = ++idx % kColorCount;
             }
         }
-
     } // destructor destroys painter and ends drawing on m_frame
 }
 
@@ -213,7 +227,8 @@ void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter 
     }
 }
 
-void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
+void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter,
+                                 const int colorIdx) const {
     painter.setPen(Qt::NoPen);
     painter.setBrush(kPolygonColors[colorIdx]);
 
@@ -265,4 +280,21 @@ void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &p
         }
 
     painter.drawLines(lines, 24);
+}
+
+void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, const int colorIdx) {
+    const QRgb color = kFillColors[colorIdx].rgb();
+    const auto &vertices = mesh.vertices();
+
+    for (const auto &[v1, v2, v3]: mesh.triangles()) {
+        raster.fillTriangle(
+            proj.project(vertices[v1].after.P),
+            proj.project(vertices[v2].after.P),
+            proj.project(vertices[v3].after.P),
+            [&](const int x, const int y) {
+                auto *line = reinterpret_cast<QRgb *>(m_frame.scanLine(y));
+                line[x] = color;
+            }
+        );
+    }
 }

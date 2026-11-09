@@ -562,16 +562,36 @@ bool dashedLineNear(const QImage &img, const QPointF &p, const QPointF &dir, con
     return false;
 }
 
-bool isBlueish(const QColor &c) {
-    return c.blue() > 120 && c.blue() > c.red() + 60 && c.blue() > c.green() + 60;
-}
-
-bool isReddish(const QColor &c) {
-    return c.red() > 120 && c.red() > c.green() + 60 && c.red() > c.blue() + 60;
-}
+// Colors differ per surface and are private to Viewport, so the tests don't check them directly:
+// layers are told apart by hiding the others, dots by their size, drawing order by comparing two images.
 
 QColor colorAt(const QImage &img, const QPointF &p) {
     return img.pixelColor(static_cast<int>(p.x()), static_cast<int>(p.y()));
+}
+
+/// The pixel containing p is drawn
+bool drawnAt(const QImage &img, const QPointF &p) {
+    return !isWhite(img, static_cast<int>(p.x()), static_cast<int>(p.y()));
+}
+
+/// The whole 3x3 neighbourhood of p is drawn: a filled control point dot (radius 3), not just a 1 px line through p
+bool dotAt(const QImage &img, const QPointF &p) {
+    const int px = static_cast<int>(p.x()), py = static_cast<int>(p.y());
+    for (int y = py - 1; y <= py + 1; ++y)
+        for (int x = px - 1; x <= px + 1; ++x)
+            if (!img.rect().contains(x, y) || isWhite(img, x, y))
+                return false;
+    return true;
+}
+
+/// The 3x3 neighbourhoods of p in both images are identical
+bool sameAround(const QImage &a, const QImage &b, const QPointF &p) {
+    const int px = static_cast<int>(p.x()), py = static_cast<int>(p.y());
+    for (int y = py - 1; y <= py + 1; ++y)
+        for (int x = px - 1; x <= px + 1; ++x)
+            if (a.pixel(x, y) != b.pixel(x, y))
+                return false;
+    return true;
 }
 
 void showOnlyPolygon(Viewport &viewport) {
@@ -623,15 +643,14 @@ TEST(ViewportPolygonTest, PolygonFollowsRotation) {
     expectPolygonDrawn(viewport, viewport.grab().toImage().convertToFormat(QImage::Format_RGB32));
 }
 
-TEST(ViewportPolygonTest, ControlPointsAreDrawnAsBlueDots) {
+TEST(ViewportPolygonTest, ControlPointsAreDrawnAsDots) {
     Viewport viewport;
     showOnlyPolygon(viewport);
     viewport.setSurfaces({flatSquare()});
     const QImage img = renderViewport(viewport, kMeshImageSize);
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j)
-            EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, controlPointOfFlatSquare(i, j)))))
-                    << "control point P" << i << j;
+            EXPECT_TRUE(dotAt(img, screenPoint(viewport, controlPointOfFlatSquare(i, j)))) << "control point P" << i << j;
 }
 
 TEST(ViewportPolygonTest, ControlPointsUseTheirOwnPositionsNotMeshVertices) {
@@ -645,17 +664,36 @@ TEST(ViewportPolygonTest, ControlPointsUseTheirOwnPositionsNotMeshVertices) {
     showOnlyPolygon(viewport);
     viewport.setSurfaces({BezierSurface(g)});
     const QImage img = renderViewport(viewport, kMeshImageSize);
-    EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, g[1][1]))));
+    EXPECT_TRUE(dotAt(img, screenPoint(viewport, g[1][1])));
 }
 
 TEST(ViewportPolygonTest, PointsOfOneSurfaceAreDrawnOverMeshOfAnother) {
     // Layers go over all meshes at once (mesh, polygon, points), so the control points of the first surface
-    // stay on top of the triangle edges of the second one. The point lies on the middle of an edge a-b.
+    // stay on top of the triangle edges of the second one: around the dot the image looks exactly as if
+    // the first surface were alone. The point lies on the middle of an edge a-b of the second surface.
     const Vec3 onEdge = 0.5f * (gridPoint(4, 5) + gridPoint(5, 5));
-    Viewport viewport;
-    viewport.setSurfaces({pointSurface(onEdge), flatSquare()});
-    const QImage img = renderViewport(viewport, kMeshImageSize);
-    EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, onEdge))));
+    Viewport both;
+    both.setSurfaces({pointSurface(onEdge), flatSquare()});
+    const QImage img = renderViewport(both, kMeshImageSize);
+    Viewport alone;
+    alone.setSurfaces({pointSurface(onEdge)});
+    const QPointF p = screenPoint(both, onEdge);
+    ASSERT_TRUE(dotAt(img, p));
+    EXPECT_TRUE(sameAround(img, renderViewport(alone, kMeshImageSize), p));
+}
+
+TEST(ViewportPolygonTest, NeighbouringSurfacesHaveDifferentColors) {
+    const Vec3 p1{-2.0f, 0.0f, 0.0f}, p2{2.0f, 0.0f, 0.0f};
+    for (auto *show : {&showOnlyPolygon, &showOnlyPoints}) {
+        Viewport viewport;
+        show(viewport);
+        viewport.setSurfaces({pointSurface(p1), pointSurface(p2)});
+        const QImage img = renderViewport(viewport, kMeshImageSize);
+        const QPointF s1 = screenPoint(viewport, p1), s2 = screenPoint(viewport, p2);
+        ASSERT_TRUE(drawnAt(img, s1));
+        ASSERT_TRUE(drawnAt(img, s2));
+        EXPECT_NE(colorAt(img, s1), colorAt(img, s2));
+    }
 }
 
 // ---------- 4.7: display flags and resolution ----------
@@ -710,8 +748,8 @@ TEST(ViewportControlsTest, HiddenMeshLeavesEdgesWhite) {
     const QImage img = grabImage(viewport);
     EXPECT_FALSE(lineNear(img, ab));
     // the other layers are still there
-    EXPECT_TRUE(isReddish(colorAt(img, screenPoint(viewport, gridPoint(4, 5)))));
-    EXPECT_TRUE(isBlueish(colorAt(img, screenPoint(viewport, controlPointOfFlatSquare(1, 2)))));
+    EXPECT_TRUE(drawnAt(img, screenPoint(viewport, gridPoint(4, 5))));
+    EXPECT_TRUE(dotAt(img, screenPoint(viewport, controlPointOfFlatSquare(1, 2))));
 }
 
 TEST(ViewportControlsTest, HiddenPolygonHidesControlPoints) {
@@ -723,13 +761,13 @@ TEST(ViewportControlsTest, HiddenPolygonHidesControlPoints) {
     EXPECT_TRUE(drawnPixels(grabImage(viewport)).empty());
 }
 
-TEST(ViewportControlsTest, PointsAreRedDotsInMeshVertices) {
+TEST(ViewportControlsTest, PointsAreDrawnInMeshVertices) {
     Viewport viewport;
     showOnlyPoints(viewport);
     viewport.setSurfaces({flatSquare()});
     const QImage img = renderViewport(viewport, kMeshImageSize);
     for (const auto &[i, j] : {std::pair{0, 0}, std::pair{3, 7}, std::pair{10, 10}, std::pair{5, 0}})
-        EXPECT_TRUE(isReddish(colorAt(img, screenPoint(viewport, gridPoint(i, j))))) << "vertex " << i << ", " << j;
+        EXPECT_TRUE(drawnAt(img, screenPoint(viewport, gridPoint(i, j)))) << "vertex " << i << ", " << j;
     // between vertices nothing is drawn
     EXPECT_FALSE(lineNear(img, midpoint(screenPoint(viewport, gridPoint(4, 5)), screenPoint(viewport, gridPoint(5, 5)))));
 }
@@ -804,7 +842,7 @@ TEST(ViewportResolutionTest, VerticesAreDrawnAtNewResolution) {
     showViewport(viewport, kMeshImageSize);
     viewport.setResolution(2);
     const QImage img = grabImage(viewport);
-    EXPECT_TRUE(isReddish(colorAt(img, screenPoint(viewport, gridPoint(1, 1, 2)))));
+    EXPECT_TRUE(drawnAt(img, screenPoint(viewport, gridPoint(1, 1, 2))));
     // vertex (1, 0) at n = 10 is gone
     EXPECT_TRUE(isWhite(img, static_cast<int>(screenPoint(viewport, gridPoint(1, 0)).x()),
                         static_cast<int>(screenPoint(viewport, gridPoint(1, 0)).y())));
