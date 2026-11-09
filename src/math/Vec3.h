@@ -46,3 +46,9 @@ inline Vec3 normalized(const Vec3 &v) {
     const float len = length(v);
     return len > 0.0f ? v / len : v;
 }
+
+inline float angle(const Vec3 &a, const Vec3 &b) {
+    const float value = dot(a, b) / (length(a) * length(b));
+
+    return std::acos(value);
+}
