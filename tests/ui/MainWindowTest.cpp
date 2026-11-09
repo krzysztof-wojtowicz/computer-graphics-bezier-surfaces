@@ -6,7 +6,12 @@
 
 #include "geometry/Mesh.h"
 
+#include <QAction>
+#include <QApplication>
 #include <QCheckBox>
+#include <QPushButton>
+#include <QColorDialog>
+#include <QTimer>
 #include <QLabel>
 #include <QList>
 #include <QSlider>
@@ -221,4 +226,93 @@ TEST(MainWindowLightingTest, EverySliderChangesOnlyItsOwnParameterAndLabel) {
     EXPECT_FLOAT_EQ(viewport->kd(), 1.0f);
     EXPECT_FLOAT_EQ(viewport->ks(), 1.0f);
     EXPECT_FLOAT_EQ(viewport->m(), 100.0f);
+}
+
+// ---------- light color (stage 6) ----------
+
+namespace {
+/// Answers the modal QColorDialog opened by `open()` once the dialog's event loop is running
+template <class OpenFn>
+void answerColorDialog(OpenFn &&open, const QColor &expectedStart, const QColor &color, const bool accept) {
+    bool answered = false;
+    QTimer::singleShot(0, [&] {
+        auto *dialog = qobject_cast<QColorDialog *>(QApplication::activeModalWidget());
+        ASSERT_NE(dialog, nullptr);
+        EXPECT_EQ(dialog->windowTitle(), "Light color");
+        EXPECT_EQ(dialog->currentColor(), expectedStart) << "dialog should start from the current light";
+        dialog->setCurrentColor(color);
+        accept ? dialog->accept() : dialog->reject();
+        answered = true;
+    });
+    open();
+    EXPECT_TRUE(answered) << "no modal dialog was opened";
+}
+} // namespace
+
+TEST(MainWindowLightingTest, MenuActionSetsLightColor) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("lightColorAction");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    EXPECT_EQ(action->text(), "Light color...");
+
+    answerColorDialog([action] { action->trigger(); }, viewport->lightColor(), QColor(255, 128, 0), true);
+    EXPECT_EQ(viewport->lightColor(), QColor(255, 128, 0));
+
+    // the second time the dialog starts from the color chosen before, not from white
+    answerColorDialog([action] { action->trigger(); }, QColor(255, 128, 0), QColor(0, 64, 255), true);
+    EXPECT_EQ(viewport->lightColor(), QColor(0, 64, 255));
+}
+
+TEST(MainWindowLightingTest, CancellingDialogKeepsLightColor) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("lightColorAction");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    const QColor before = viewport->lightColor();
+
+    answerColorDialog([action] { action->trigger(); }, before, QColor(10, 20, 30), false);
+    EXPECT_EQ(viewport->lightColor(), before);
+}
+
+namespace {
+/// Color of the swatch icon on the light color button
+QColor swatchColor(const QPushButton &button) {
+    return button.icon().pixmap(16, 16).toImage().pixelColor(8, 8);
+}
+} // namespace
+
+TEST(MainWindowLightingTest, PanelButtonSetsLightColorAndShowsIt) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *button = window.findChild<QPushButton *>("lightColorButton");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(button, nullptr);
+    EXPECT_EQ(button->text(), "Light color...");
+    EXPECT_EQ(swatchColor(*button), viewport->lightColor()) << "initial swatch";
+
+    answerColorDialog([button] { button->click(); }, viewport->lightColor(), QColor(40, 200, 90), true);
+    EXPECT_EQ(viewport->lightColor(), QColor(40, 200, 90));
+    EXPECT_EQ(swatchColor(*button), QColor(40, 200, 90));
+
+    answerColorDialog([button] { button->click(); }, QColor(40, 200, 90), QColor(1, 2, 3), false);
+    EXPECT_EQ(viewport->lightColor(), QColor(40, 200, 90)) << "cancel keeps the color";
+    EXPECT_EQ(swatchColor(*button), QColor(40, 200, 90));
+}
+
+TEST(MainWindowLightingTest, MenuAndPanelShareTheLightColor) {
+    // a color picked in the menu must also show on the panel button, and the button's dialog starts from it
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("lightColorAction");
+    auto *button = window.findChild<QPushButton *>("lightColorButton");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(button, nullptr);
+
+    answerColorDialog([action] { action->trigger(); }, viewport->lightColor(), QColor(250, 10, 10), true);
+    EXPECT_EQ(swatchColor(*button), QColor(250, 10, 10));
+    answerColorDialog([button] { button->click(); }, QColor(250, 10, 10), QColor(250, 10, 10), true);
 }

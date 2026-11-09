@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -1168,11 +1169,112 @@ TEST(ViewportLightingTest, ZeroCoefficientsGiveBlackFill) {
     EXPECT_TRUE(isWhite(img, 0, 0)) << "background stays white";
 }
 
+TEST(ViewportLightingTest, LightIsWhiteByDefault) {
+    const Viewport viewport;
+    EXPECT_EQ(viewport.lightColor(), QColor(Qt::white));
+}
+
+TEST(ViewportLightingTest, LightColorFiltersFillPerComponent) {
+    // with a pure green light only the green part of the (reddish) fill remains
+    const Vec3 center{0.0f, 0.0f, 0.0f};
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquareAround(center, 1.0f)});
+    const QPointF p = screenPoint(viewport, center);
+    const QColor white = colorAt(showViewport(viewport, kMeshImageSize), p);
+    ASSERT_GT(white.green(), 0);
+
+    viewport.setLightColor(QColor(0, 255, 0));
+    EXPECT_EQ(viewport.lightColor(), QColor(0, 255, 0));
+    const QColor green = colorAt(grabImage(viewport), p); // shown widget: only a setter with render() changes it
+    EXPECT_EQ(green.red(), 0);
+    EXPECT_EQ(green.blue(), 0);
+    EXPECT_EQ(green.green(), white.green());
+}
+
+TEST(ViewportLightingTest, LightColorRoundTripsThroughShading) {
+    Viewport viewport;
+    for (const QColor &c : {QColor(0, 0, 0), QColor(12, 128, 255), QColor(200, 7, 99)}) {
+        viewport.setLightColor(c);
+        EXPECT_EQ(viewport.lightColor(), c);
+    }
+}
+
+namespace {
+/// Dome bulging towards the viewer, built in scene coordinates (like sceneRect) so it faces the screen at start
+BezierSurface sceneDome(const Viewport &viewport) {
+    constexpr std::array<float, 4> kBulge{0.0f, 1.0f, 1.0f, 0.0f};
+    const Mat3 back = viewport.rotation().transposed();
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = back * Vec3{.x = -3.0f + 2.0f * static_cast<float>(i),
+                                  .y = -3.0f + 2.0f * static_cast<float>(j),
+                                  .z = 3.0f * kBulge[i] * kBulge[j]};
+    return BezierSurface(g);
+}
+
+struct Highlight {
+    float u, v;
+    int brightness;
+};
+
+/// Brightest point of the surface, sampled on a (u, v) grid: tracks the highlight on the surface itself,
+/// not on the screen (for a dome under a directional light it stays at almost the same screen spot)
+Highlight brightestPoint(const Viewport &viewport, const QImage &img, const BezierSurface &surface) {
+    constexpr int kSamples = 40;
+    Highlight best{.u = 0.0f, .v = 0.0f, .brightness = -1};
+    // edge samples skipped: on the silhouette the pixel can be the white background
+    for (int a = 1; a < kSamples; ++a)
+        for (int b = 1; b < kSamples; ++b) {
+            const float u = static_cast<float>(a) / kSamples, v = static_cast<float>(b) / kSamples;
+            const QColor c = colorAt(img, screenPoint(viewport, surface.evaluate(u, v).P));
+            if (c == QColor(Qt::white)) continue;
+            const int brightness = c.red() + c.green() + c.blue();
+            if (brightness > best.brightness)
+                best = {.u = u, .v = v, .brightness = brightness};
+        }
+    return best;
+}
+} // namespace
+
+TEST(ViewportLightingTest, HighlightMovesAcrossSurfaceWhenRotated) {
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setKd(0.0f); // only the specular term, so the brightest point is the highlight
+    viewport.setKs(1.0f);
+    viewport.setM(20.0f);
+    const BezierSurface dome = sceneDome(viewport);
+    viewport.setSurfaces({dome});
+
+    const Highlight before = brightestPoint(viewport, showViewport(viewport, kMeshImageSize), dome);
+    ASSERT_GT(before.brightness, 200) << "there is a visible highlight";
+    ASSERT_GT(before.u, 0.15f) << "highlight not at the edge, so it has room to move";
+    ASSERT_LT(before.u, 0.85f);
+
+    // 40 px = 0.4 rad around the screen Y axis: the normals turn, the highlight goes to another part of the dome
+    drag(viewport, {300, 300}, {340, 300});
+    const Highlight after = brightestPoint(viewport, grabImage(viewport), dome);
+    EXPECT_GT(after.brightness, 200);
+    EXPECT_GT(std::abs(after.u - before.u), 0.1f) << "u: " << before.u << " -> " << after.u << ", v: " << before.v << " -> " << after.v;
+
+    // dragging back brings it back to the same place
+    drag(viewport, {340, 300}, {300, 300});
+    const Highlight back = brightestPoint(viewport, grabImage(viewport), dome);
+    EXPECT_NEAR(back.u, before.u, 0.03f);
+    EXPECT_NEAR(back.v, before.v, 0.03f);
+}
+
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
     GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork
     Viewport viewport;
     EXPECT_DEATH(viewport.setResolution(Mesh::kMinResolution - 1), "out of range");
     EXPECT_DEATH(viewport.setResolution(Mesh::kMaxResolution + 1), "out of range");
+}
+
+TEST(ViewportDeathTest, RejectsInvalidLightColor) {
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setLightColor(QColor()), "invalid light color");
 }
 #endif

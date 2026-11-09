@@ -33,6 +33,7 @@ public:
     [[nodiscard]] float kd() const { return m_shader.kd(); }
     [[nodiscard]] float ks() const { return m_shader.ks(); }
     [[nodiscard]] float m() const { return m_shader.m(); }
+    [[nodiscard]] QColor lightColor() const;
 
     // --- SETTERS ---
     void setResolution(int n);
@@ -43,6 +44,7 @@ public:
     void setKd(float kd);
     void setKs(float ks);
     void setM(float m);
+    void setLightColor(const QColor &color);
 
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
 

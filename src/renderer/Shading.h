@@ -43,6 +43,7 @@ public:
     [[nodiscard]] float kd() const { return _kd; }
     [[nodiscard]] float ks() const { return _ks; }
     [[nodiscard]] float m() const { return _m; }
+    [[nodiscard]] ShadingColor il() const { return _il; }
 
     // --- METHODS ---
     /// Converts float values [0,1] to int values [0,255];

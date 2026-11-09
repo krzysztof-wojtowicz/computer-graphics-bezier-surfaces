@@ -75,6 +75,23 @@ void Viewport::setM(const float m) {
     update();
 }
 
+QColor Viewport::lightColor() const {
+    const auto [r, g, b] = m_shader.il();
+    return {Shading::float2int(r), Shading::float2int(g), Shading::float2int(b)};
+}
+
+void Viewport::setLightColor(const QColor &color) {
+    assert(color.isValid() && "invalid light color!");
+    m_shader.setIl({
+        .r = Shading::int2float(color.red()),
+        .g = Shading::int2float(color.green()),
+        .b = Shading::int2float(color.blue())
+    });
+
+    render();
+    update();
+}
+
 
 /// Generates mesh for each Bezier Surface
 void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {

@@ -10,6 +10,12 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QGroupBox>
+#include <QColorDialog>
+#include <QMenuBar>
+#include <QAction>
+#include <QIcon>
+#include <QPixmap>
+#include <QPushButton>
 
 #include <cmath>
 #include <utility>
@@ -85,11 +91,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addSlider("ks", 0, 100, m_viewport->ks(), 0.01f, &Viewport::setKs);
     addSlider("m", 1, 100, m_viewport->m(), 1.0f, &Viewport::setM);
 
+    // the button shows the current light color as an icon; the same dialog is also in the menu
+    m_lightColorButton = new QPushButton("Light color...", lightGroup);
+    m_lightColorButton->setObjectName("lightColorButton");
+    lightLayout->addWidget(m_lightColorButton);
+    connect(m_lightColorButton, &QPushButton::clicked, this, &MainWindow::chooseLightColor);
+    updateLightColorButton();
+
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
     panelLayout->addWidget(lightGroup);
     panelLayout->addStretch();
     layout->addWidget(panel);
+
+    // Colors are picked in a dialog, so they live in the menu, not in the side panel
+    auto *lightingMenu = menuBar()->addMenu("Lighting");
+    auto *lightColorAction = lightingMenu->addAction("Light color...");
+    lightColorAction->setObjectName("lightColorAction");
+    connect(lightColorAction, &QAction::triggered, this, &MainWindow::chooseLightColor);
 
     // Set central widget, window title and window size
     setCentralWidget(central);
@@ -117,4 +136,19 @@ void MainWindow::loadDefaultSurfaces() {
     statusBar()->showMessage(QString("Loaded %1 surfaces").arg(m_surfaces.size()));
 
     m_viewport->setSurfaces(m_surfaces);
+}
+
+/// Cancelling the dialog returns an invalid color: the light stays as it was then
+void MainWindow::chooseLightColor() {
+    const QColor color = QColorDialog::getColor(m_viewport->lightColor(), this, "Light color");
+    if (!color.isValid()) return;
+
+    m_viewport->setLightColor(color);
+    updateLightColorButton();
+}
+
+void MainWindow::updateLightColorButton() {
+    QPixmap swatch(16, 16);
+    swatch.fill(m_viewport->lightColor());
+    m_lightColorButton->setIcon(QIcon(swatch));
 }
