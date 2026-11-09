@@ -1129,6 +1129,45 @@ TEST(ViewportResolutionTest, VerticesAreDrawnAtNewResolution) {
                         static_cast<int>(screenPoint(viewport, gridPoint(1, 0)).y())));
 }
 
+// ---------- lighting parameters (stage 6) ----------
+
+TEST(ViewportLightingTest, SettersStoreValuesAndRedraw) {
+    // each setter must re-render, otherwise the image keeps the old shading until the next drag
+    const Vec3 center{0.0f, 0.0f, 0.0f};
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquareAround(center, 1.0f)});
+    const QPointF p = screenPoint(viewport, center);
+    const QColor initial = colorAt(showViewport(viewport, kMeshImageSize), p);
+
+    viewport.setKd(0.2f);
+    EXPECT_FLOAT_EQ(viewport.kd(), 0.2f);
+    const QColor dimmer = colorAt(grabImage(viewport), p);
+    EXPECT_NE(dimmer, initial) << "setKd";
+
+    // with the default m = 50 the highlight is ~0 away from its centre, so widen it first
+    viewport.setM(1.0f);
+    EXPECT_FLOAT_EQ(viewport.m(), 1.0f);
+    const QColor wide = colorAt(grabImage(viewport), p);
+    EXPECT_NE(wide, dimmer) << "setM";
+
+    viewport.setKs(0.0f);
+    EXPECT_FLOAT_EQ(viewport.ks(), 0.0f);
+    EXPECT_NE(colorAt(grabImage(viewport), p), wide) << "setKs";
+}
+
+TEST(ViewportLightingTest, ZeroCoefficientsGiveBlackFill) {
+    const Vec3 center{0.0f, 0.0f, 0.0f};
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquareAround(center, 1.0f)});
+    viewport.setKd(0.0f);
+    viewport.setKs(0.0f);
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    EXPECT_EQ(colorAt(img, screenPoint(viewport, center)), QColor(Qt::black));
+    EXPECT_TRUE(isWhite(img, 0, 0)) << "background stays white";
+}
+
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
     GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork

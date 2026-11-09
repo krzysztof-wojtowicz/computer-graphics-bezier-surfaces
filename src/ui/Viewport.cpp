@@ -54,6 +54,27 @@ void Viewport::setShowFill(const bool show) {
     update();
 }
 
+void Viewport::setKd(const float kd) {
+    m_shader.setKd(kd);
+
+    render();
+    update();
+}
+
+void Viewport::setKs(const float ks) {
+    m_shader.setKs(ks);
+
+    render();
+    update();
+}
+
+void Viewport::setM(const float m) {
+    m_shader.setM(m);
+
+    render();
+    update();
+}
+
 
 /// Generates mesh for each Bezier Surface
 void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
@@ -296,8 +317,6 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
     };
     const auto &vertices = mesh.vertices();
 
-    const Shading shader;
-
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         const ScreenPoint a = proj.project(vertices[v1].after.P);
         const ScreenPoint b = proj.project(vertices[v2].after.P);
@@ -315,7 +334,7 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
                     // interpolate N
                     const auto N = interpolate(w, vertices[v1].after.N, vertices[v2].after.N, vertices[v3].after.N);
 
-                    const auto [red, green, blue] = shader.calculateColor(sColor, N);
+                    const auto [red, green, blue] = m_shader.calculateColor(sColor, N);
 
                     reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = qRgb(
                         Shading::float2int(red),

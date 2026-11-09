@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QGroupBox>
 
+#include <cmath>
 #include <utility>
 
 /// Creates new MainWindow with the central widget with app content:
@@ -34,6 +35,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *meshLayout = new QVBoxLayout(meshGroup);
     auto *resolutionLabel = new QLabel(meshGroup);
     auto *resolutionSlider = new QSlider(Qt::Horizontal, meshGroup);
+    resolutionSlider->setObjectName("resolutionSlider");
     resolutionSlider->setRange(Mesh::kMinResolution, Mesh::kMaxResolution);
     resolutionSlider->setValue(m_viewport->resolution());
     resolutionLabel->setText(QString("Resolution n = %1").arg(m_viewport->resolution()));
@@ -58,8 +60,34 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addToggle("Mesh points",    m_viewport->showPoints(),  &Viewport::setShowPoints);
     addToggle("Triangle fill", m_viewport->showFill(), &Viewport::setShowFill);
 
+    // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, m in [1, 100] as is
+    auto *lightGroup = new QGroupBox("Lighting", panel);
+    auto *lightLayout = new QVBoxLayout(lightGroup);
+    auto addSlider = [&](const QString &name, const int min, const int max, const float initial,
+                         const float scale, void (Viewport::*setter)(float)) {
+        const int decimals = scale == 1.0f ? 0 : 2;
+        auto *label = new QLabel(QString("%1 = %2").arg(name).arg(initial, 0, 'f', decimals), lightGroup);
+        auto *slider = new QSlider(Qt::Horizontal, lightGroup);
+        slider->setObjectName(name + "Slider");
+        slider->setRange(min, max);
+        slider->setValue(static_cast<int>(std::lround(initial / scale)));
+        lightLayout->addWidget(label);
+        lightLayout->addWidget(slider);
+
+        connect(slider, &QSlider::valueChanged, m_viewport, [this, setter, scale](const int value) {
+            (m_viewport->*setter)(static_cast<float>(value) * scale);
+        });
+        connect(slider, &QSlider::valueChanged, label, [label, name, scale, decimals](const int value) {
+            label->setText(QString("%1 = %2").arg(name).arg(static_cast<float>(value) * scale, 0, 'f', decimals));
+        });
+    };
+    addSlider("kd", 0, 100, m_viewport->kd(), 0.01f, &Viewport::setKd);
+    addSlider("ks", 0, 100, m_viewport->ks(), 0.01f, &Viewport::setKs);
+    addSlider("m", 1, 100, m_viewport->m(), 1.0f, &Viewport::setM);
+
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
+    panelLayout->addWidget(lightGroup);
     panelLayout->addStretch();
     layout->addWidget(panel);
 

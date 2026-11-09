@@ -1,4 +1,4 @@
-// Tests of the side panel in MainWindow (stage 4.7): the controls start with the Viewport's values
+// Tests of the side panel in MainWindow (stages 4.7 and 6): the controls start with the Viewport's values
 // and changing them changes the Viewport.
 
 #include "ui/MainWindow.h"
@@ -14,6 +14,9 @@
 #include <QWidget>
 
 #include <gtest/gtest.h>
+
+#include <cmath>
+#include <tuple>
 
 namespace {
 /// Viewport has no Q_OBJECT, so findChild<Viewport *> can't tell it from other widgets: use dynamic_cast
@@ -39,6 +42,14 @@ QLabel *findResolutionLabel(const MainWindow &window) {
     return nullptr;
 }
 
+/// The label of a lighting slider, e.g. "kd = 0.50" for name "kd"
+QLabel *findLabelStartingWith(const MainWindow &window, const QString &prefix) {
+    for (QLabel *label : window.findChildren<QLabel *>())
+        if (label->text().startsWith(prefix))
+            return label;
+    return nullptr;
+}
+
 struct Panel {
     Viewport *viewport;
     QSlider *slider;
@@ -51,7 +62,7 @@ struct Panel {
 
 Panel findPanel(const MainWindow &window) {
     return {.viewport = findViewport(window),
-            .slider = window.findChild<QSlider *>(),
+            .slider = window.findChild<QSlider *>("resolutionSlider"),
             .label = findResolutionLabel(window),
             .polygon = findCheckBox(window, "Bezier polygon"),
             .mesh = findCheckBox(window, "Triangle mesh"),
@@ -140,4 +151,74 @@ TEST(MainWindowPanelTest, EveryCheckBoxTogglesItsOwnLayer) {
     EXPECT_TRUE(p.viewport->showMesh());
     EXPECT_TRUE(p.viewport->showPoints());
     EXPECT_TRUE(p.viewport->showFill());
+}
+
+// ---------- lighting sliders (stage 6) ----------
+
+namespace {
+struct LightSlider {
+    QSlider *slider;
+    QLabel *label;
+};
+
+LightSlider findLightSlider(const MainWindow &window, const QString &name) {
+    return {.slider = window.findChild<QSlider *>(name + "Slider"),
+            .label = findLabelStartingWith(window, name + " = ")};
+}
+} // namespace
+
+TEST(MainWindowLightingTest, SlidersCoverParameterRanges) {
+    const MainWindow window;
+    for (const auto &[name, min, max] : {std::tuple{"kd", 0, 100}, std::tuple{"ks", 0, 100}, std::tuple{"m", 1, 100}}) {
+        SCOPED_TRACE(name);
+        const LightSlider s = findLightSlider(window, name);
+        ASSERT_NE(s.slider, nullptr);
+        ASSERT_NE(s.label, nullptr);
+        EXPECT_EQ(s.slider->orientation(), Qt::Horizontal);
+        EXPECT_EQ(s.slider->minimum(), min);
+        EXPECT_EQ(s.slider->maximum(), max);
+    }
+}
+
+TEST(MainWindowLightingTest, SlidersStartWithViewportValues) {
+    const MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    const LightSlider kd = findLightSlider(window, "kd"), ks = findLightSlider(window, "ks"),
+                      m = findLightSlider(window, "m");
+    ASSERT_TRUE(kd.slider && ks.slider && m.slider && kd.label && ks.label && m.label);
+    EXPECT_EQ(kd.slider->value(), std::lround(viewport->kd() * 100.0f));
+    EXPECT_EQ(ks.slider->value(), std::lround(viewport->ks() * 100.0f));
+    EXPECT_EQ(m.slider->value(), std::lround(viewport->m()));
+    EXPECT_EQ(kd.label->text(), QString("kd = %1").arg(viewport->kd(), 0, 'f', 2));
+    EXPECT_EQ(ks.label->text(), QString("ks = %1").arg(viewport->ks(), 0, 'f', 2));
+    EXPECT_EQ(m.label->text(), QString("m = %1").arg(std::lround(viewport->m())));
+}
+
+TEST(MainWindowLightingTest, EverySliderChangesOnlyItsOwnParameterAndLabel) {
+    const MainWindow window;
+    Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    const LightSlider kd = findLightSlider(window, "kd"), ks = findLightSlider(window, "ks"),
+                      m = findLightSlider(window, "m");
+    ASSERT_TRUE(kd.slider && ks.slider && m.slider && kd.label && ks.label && m.label);
+
+    kd.slider->setValue(30);
+    ks.slider->setValue(75);
+    m.slider->setValue(7);
+    EXPECT_FLOAT_EQ(viewport->kd(), 0.30f);
+    EXPECT_FLOAT_EQ(viewport->ks(), 0.75f);
+    EXPECT_FLOAT_EQ(viewport->m(), 7.0f);
+    EXPECT_EQ(kd.label->text(), "kd = 0.30");
+    EXPECT_EQ(ks.label->text(), "ks = 0.75");
+    EXPECT_EQ(m.label->text(), "m = 7");
+
+    // ends of the ranges are accepted by the Shading asserts
+    for (QSlider *slider : {kd.slider, ks.slider, m.slider}) {
+        slider->setValue(slider->minimum());
+        slider->setValue(slider->maximum());
+    }
+    EXPECT_FLOAT_EQ(viewport->kd(), 1.0f);
+    EXPECT_FLOAT_EQ(viewport->ks(), 1.0f);
+    EXPECT_FLOAT_EQ(viewport->m(), 100.0f);
 }

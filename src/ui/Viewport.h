@@ -16,6 +16,7 @@
 #include "renderer/ZBuffer.h"
 #include "renderer/Barycentric.h"
 #include "renderer/Rasterizer.h"
+#include "renderer/Shading.h"
 
 class Viewport : public QWidget {
 public:
@@ -29,6 +30,9 @@ public:
     [[nodiscard]] bool showPolygon() const { return m_showPolygon; }
     [[nodiscard]] bool showPoints() const { return m_showPoints; }
     [[nodiscard]] bool showFill() const { return m_showFill; }
+    [[nodiscard]] float kd() const { return m_shader.kd(); }
+    [[nodiscard]] float ks() const { return m_shader.ks(); }
+    [[nodiscard]] float m() const { return m_shader.m(); }
 
     // --- SETTERS ---
     void setResolution(int n);
@@ -36,6 +40,9 @@ public:
     void setShowPolygon(bool show);
     void setShowPoints(bool show);
     void setShowFill(bool show);
+    void setKd(float kd);
+    void setKs(float ks);
+    void setM(float m);
 
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
 
@@ -73,6 +80,7 @@ private:
     Mat3 m_rotation = rotationX(-1.0f) * rotationZ(0.5f);
     QPoint m_lastMousePos;
     ZBuffer m_zbuffer; // sized in resizeEvent, like m_frame
+    Shading m_shader;
 
     int m_resolution = Mesh::kDefaultResolution;
     bool m_showMesh = true;
