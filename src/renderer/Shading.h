@@ -36,11 +36,12 @@ public:
     }
 
     // --- METHODS ---
-    static int scaleColor(const float color) { return static_cast<int>(color * 255); }
+    static int float2int(const float color) { return static_cast<int>(color * 255.0f); }
+    static float int2float(const int color) { return static_cast<float>(color) / 255.0f; }
 
-    [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const SurfacePoint &p) const {
+    [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 N) const {
         // calculate cos(angle(N, L)) and cos^m(angle(V,R))
-        const Vec3 N = normalized(p.N);
+        normalized(N);
         const Vec3 R = dot(N, _l) * 2.0f * N - _l;
         const float cosNL = _kd * std::max(0.0f, std::cos(angle(N, _l)));
         const float cosVR = _ks * std::pow(std::max(0.0f, std::cos(angle(_v, R))), _m);
@@ -59,5 +60,5 @@ private:
     ShadingColor _il = ShadingColor{.r = 1, .g = 1, .b = 1}; // light color, default is white
     float _m = 50.0f; // surface character factor from [0,1]
     Vec3 _v = Vec3{.x = 0, .y = 0, .z = 1}; // V vector [0,0,1]
-    Vec3 _l = Vec3{.x = 1, .y = 0, .z = 0}; // light direction
+    Vec3 _l = Vec3{.x = 0.1f, .y = 0.3f, .z = 0.5f}; // light direction
 };
