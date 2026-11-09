@@ -42,7 +42,7 @@ constexpr Vec3 cross(const Vec3 &a, const Vec3 &b) {
 
 inline float length(const Vec3 &v) { return std::sqrt(dot(v, v)); }
 
-inline Vec3 normalized(const Vec3 &v) {
+[[nodiscard]] inline Vec3 normalized(const Vec3 &v) {
     const float len = length(v);
     return len > 0.0f ? v / len : v;
 }

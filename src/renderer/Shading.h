@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cassert>
+#include <cmath>
+#include <algorithm>
 
 #include "math/Vec3.h"
-#include "geometry/BezierSurface.h"
 
 struct ShadingColor {
     float r, g, b;
@@ -31,8 +32,7 @@ public:
         _m = m;
     }
     void setL(const Vec3 v) {
-        _l = v;
-        normalized(_l);
+        _l = normalized(v);
     }
 
     // --- METHODS ---
@@ -46,9 +46,9 @@ public:
         return std::min(std::max(static_cast<float>(color) / 255.0f, 0.0f), 1.0f);
     }
 
-    [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 N) const {
+    [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 n) const {
         // calculate cos(angle(N, L)) and cos^m(angle(V,R))
-        normalized(N);
+        const Vec3 N = normalized(n);
         const Vec3 R = dot(N, _l) * 2.0f * N - _l;
         const float cosNL = _kd * std::max(0.0f, std::cos(angle(N, _l)));
         const float cosVR = _ks * std::pow(std::max(0.0f, std::cos(angle(_v, R))), _m);
@@ -65,7 +65,7 @@ private:
     float _kd = 1.0f; // d impact factor from [0,1]
     float _ks = 1.0f; // s impact factor from [0,1]
     ShadingColor _il = ShadingColor{.r = 1, .g = 1, .b = 1}; // light color, default is white
-    float _m = 50.0f; // surface character factor from [0,1]
+    float _m = 50.0f; // surface character factor from [0,100]
     Vec3 _v = Vec3{.x = 0, .y = 0, .z = 1}; // V vector [0,0,1]
-    Vec3 _l = Vec3{.x = 0.1f, .y = 0.3f, .z = 0.5f}; // light direction
+    Vec3 _l = normalized(Vec3{.x = 0.1f, .y = 0.3f, .z = 0.5f}); // light direction
 };
