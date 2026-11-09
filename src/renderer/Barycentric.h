@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/Projection.h"
+#include "math/Vec3.h"
 
 #include <cmath>
 
@@ -41,4 +42,13 @@ private:
 /// Interpolates parameter F(p) with parameters f_a, f_b and f_c using barycentric weights
 [[nodiscard]] inline float interpolate(const Weights &w, const float a, const float b, const float c) {
     return a * w.a + b * w.b + c * w.c;
+}
+
+/// Works the same as interpolate, but for Vec3
+[[nodiscard]] inline Vec3 interpolate(const Weights &w, const Vec3 Na, const Vec3 Nb, const Vec3 Nc) {
+    return Vec3{
+        .x = w.a * Na.x + w.b * Nb.x + w.c * Nc.x,
+        .y = w.a * Na.y + w.b * Nb.y + w.c * Nc.y,
+        .z = w.a * Na.z + w.b * Nb.z + w.c * Nc.z
+    };
 }
