@@ -40,9 +40,9 @@ public:
     }
 
     // --- METHODS ---
-    /// Converts float values [0,1] to int values [0,255]
+    /// Converts float values [0,1] to int values [0,255];
     static int float2int(const float color) {
-        return static_cast<int>(std::lround(std::min(std::max(color * 255.0f, 0.0f), 255.0f)));
+        return static_cast<int>(std::lround(std::max(0.0f, std::min(color * 255.0f, 255.0f))));
     }
 
     /// Converts int values [0,255] to float values [0,1]

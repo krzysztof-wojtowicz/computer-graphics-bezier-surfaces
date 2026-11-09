@@ -26,6 +26,7 @@ add_executable(core_tests
         renderer/RasterizerTest.cpp
         renderer/BarycentricTest.cpp
         renderer/ZBufferTest.cpp
+        renderer/ShadingTest.cpp
 )
 target_include_directories(core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(core_tests PRIVATE bezier_core GTest::gtest_main)
