@@ -839,6 +839,136 @@ TEST(ViewportFillTest, DegenerateSurfacesDoNotCrash) {
         EXPECT_LE(boundingBox(pixels).width(), 1);
 }
 
+// ---------- 5.6: Z-buffer ----------
+
+namespace {
+/// Flat rectangle given directly in scene coordinates (after rotation): center q, half sizes, z = q.z + slope * (x - q.x).
+/// Control points are R^T * scene point, so after Viewport applies R the mesh lies exactly there,
+/// whatever the initial rotation is.
+BezierSurface sceneRect(const Viewport &viewport, const Vec3 &q, const float halfX, const float halfY,
+                        const float slope = 0.0f) {
+    const Mat3 back = viewport.rotation().transposed();
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+            const float dx = -halfX + 2.0f * halfX * static_cast<float>(i) / 3.0f;
+            const float dy = -halfY + 2.0f * halfY * static_cast<float>(j) / 3.0f;
+            g[i][j] = back * Vec3{.x = q.x + dx, .y = q.y + dy, .z = q.z + slope * dx};
+        }
+    return BezierSurface(g);
+}
+
+/// Screen position of a point given in scene coordinates (already rotated)
+QPointF sceneToScreen(const Vec3 &q) {
+    const ScreenPoint sp = Projection(kMeshImageSize.width(), kMeshImageSize.height()).project(q);
+    return {sp.x, sp.y};
+}
+
+// Two overlapping squares: the near one (z = 1) on the left, the far one (z = -1) on the right
+const Vec3 kNearCenter{-1.0f, 0.0f, 1.0f}, kFarCenter{1.0f, 0.0f, -1.0f};
+const Vec3 kOverlap{0.0f, 0.0f, 0.0f}, kNearOnly{-2.5f, 0.0f, 1.0f}, kFarOnly{2.5f, 0.0f, -1.0f};
+
+/// In the overlap the near square is visible: same color as where it is alone, different from the far one
+void expectNearSquareVisible(const QImage &img) {
+    const QColor overlap = colorAt(img, sceneToScreen(kOverlap));
+    const QColor nearOnly = colorAt(img, sceneToScreen(kNearOnly));
+    const QColor farOnly = colorAt(img, sceneToScreen(kFarOnly));
+    ASSERT_NE(nearOnly, farOnly) << "surfaces must have different colors for this test";
+    EXPECT_EQ(overlap, nearOnly);
+}
+} // namespace
+
+TEST(ViewportDepthTest, NearerSurfaceCoversFartherOneInAnyOrder) {
+    // Without a depth test the surface drawn last would always win, so one of the orders would fail
+    for (const bool nearFirst : {true, false}) {
+        Viewport viewport;
+        showOnlyFill(viewport);
+        const BezierSurface nearSquare = sceneRect(viewport, kNearCenter, 2.0f, 2.0f);
+        const BezierSurface farSquare = sceneRect(viewport, kFarCenter, 2.0f, 2.0f);
+        viewport.setSurfaces(nearFirst ? std::vector{nearSquare, farSquare} : std::vector{farSquare, nearSquare});
+        SCOPED_TRACE(nearFirst ? "near surface first" : "far surface first");
+        expectNearSquareVisible(renderViewport(viewport, kMeshImageSize));
+    }
+}
+
+TEST(ViewportDepthTest, IntersectingSurfacesSwitchAlongIntersection) {
+    // A: plane z = 0, y in [-3, 1]; B: plane z = 0.5 * x, y in [-1, 3]. They cross along x = 0:
+    // for x > 0 B is closer, for x < 0 A is. A alone at y = -2, B alone at y = 2.
+    for (const bool aFirst : {true, false}) {
+        Viewport viewport;
+        showOnlyFill(viewport);
+        const BezierSurface a = sceneRect(viewport, {0.0f, -1.0f, 0.0f}, 3.0f, 2.0f);
+        const BezierSurface b = sceneRect(viewport, {0.0f, 1.0f, 0.0f}, 3.0f, 2.0f, 0.5f);
+        viewport.setSurfaces(aFirst ? std::vector{a, b} : std::vector{b, a});
+        const QImage img = renderViewport(viewport, kMeshImageSize);
+        SCOPED_TRACE(aFirst ? "A first" : "B first");
+        const QColor aOnly = colorAt(img, sceneToScreen({0.0f, -2.0f, 0.0f}));
+        const QColor bOnly = colorAt(img, sceneToScreen({0.0f, 2.0f, 0.0f}));
+        ASSERT_NE(aOnly, bOnly);
+        EXPECT_EQ(colorAt(img, sceneToScreen({2.0f, 0.0f, 0.0f})), bOnly) << "right of the intersection";
+        EXPECT_EQ(colorAt(img, sceneToScreen({-2.0f, 0.0f, 0.0f})), aOnly) << "left of the intersection";
+        EXPECT_EQ(colorAt(img, sceneToScreen({0.5f, 0.0f, 0.0f})), bOnly) << "just right of the intersection";
+        EXPECT_EQ(colorAt(img, sceneToScreen({-0.5f, 0.0f, 0.0f})), aOnly) << "just left of the intersection";
+    }
+}
+
+TEST(ViewportDepthTest, HalfTurnShowsTheOtherSurface) {
+    // 314 px = 3.14 rad around the screen Y axis: (x, y, z) -> (-x, y, -z), the far square comes to the front
+    Viewport viewport;
+    showOnlyFill(viewport);
+    const Mat3 back = viewport.rotation().transposed();
+    viewport.setSurfaces({sceneRect(viewport, kNearCenter, 2.0f, 2.0f), sceneRect(viewport, kFarCenter, 2.0f, 2.0f)});
+    const QImage before = renderViewport(viewport, kMeshImageSize);
+    ASSERT_NO_FATAL_FAILURE(expectNearSquareVisible(before));
+
+    // object coordinates of the sample points, to find them again after the turn
+    const Vec3 overlap = back * kOverlap, nearOnly = back * kNearOnly, farOnly = back * kFarOnly;
+    drag(viewport, {100, 300}, {414, 300});
+    const QImage after = grabImage(viewport);
+    const QColor wasFar = colorAt(after, screenPoint(viewport, farOnly));
+    ASSERT_NE(wasFar, colorAt(after, screenPoint(viewport, nearOnly)));
+    EXPECT_EQ(colorAt(after, screenPoint(viewport, overlap)), wasFar);
+}
+
+TEST(ViewportDepthTest, DepthIsResetEveryFrame) {
+    // Without clearing, the depths of the previous frame would block the next one (equal z is rejected),
+    // leaving holes; dragging there and back must give the same image again
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquare()});
+    const QImage before = renderViewport(viewport, kMeshImageSize);
+    // horizontal only: rotationY(a) * rotationY(-a) = identity, a diagonal drag would not come back exactly
+    drag(viewport, {100, 100}, {160, 100});
+    EXPECT_EQ(undrawnSamplesInside(viewport, grabImage(viewport), 0.02f), 0) << "holes after the first drag";
+    drag(viewport, {160, 100}, {100, 100});
+    // same rotation up to float noise (see DragBackAndForthRestoresImage): a few border pixels may differ
+    const QImage after = grabImage(viewport);
+    int differentPixels = 0;
+    for (int y = 0; y < before.height(); ++y)
+        for (int x = 0; x < before.width(); ++x)
+            if (before.pixel(x, y) != after.pixel(x, y))
+                ++differentPixels;
+    EXPECT_LE(differentPixels, 50);
+}
+
+TEST(ViewportDepthTest, RedrawWithoutChangesGivesSameImage) {
+    // Exactly the same depths again: without clearing the buffer every pixel would be rejected
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquare()});
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    viewport.setShowFill(true); // setter re-renders with unchanged data
+    EXPECT_EQ(grabImage(viewport), before);
+}
+
+TEST(ViewportDepthTest, DepthTestWorksAfterResize) {
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({sceneRect(viewport, kNearCenter, 2.0f, 2.0f), sceneRect(viewport, kFarCenter, 2.0f, 2.0f)});
+    renderViewport(viewport, {200, 150}); // smaller first: a buffer not resized with the image would be too small
+    expectNearSquareVisible(renderViewport(viewport, kMeshImageSize));
+}
+
 // ---------- 4.7: display flags and resolution ----------
 
 TEST(ViewportControlsTest, DefaultsShowEverythingAtDefaultResolution) {

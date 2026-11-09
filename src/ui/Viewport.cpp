@@ -76,7 +76,8 @@ void Viewport::paintEvent(QPaintEvent *) {
 
 void Viewport::resizeEvent(QResizeEvent *) {
     m_frame = QImage(size(), QImage::Format_RGB32);
-    m_zbuffer.resize(m_frame.width(), m_frame.height());
+    if (!m_frame.isNull())   // a collapsed widget has size 0, render() returns early then
+        m_zbuffer.resize(m_frame.width(), m_frame.height());
 
     render();
 }

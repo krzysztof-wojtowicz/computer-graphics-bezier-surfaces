@@ -2,6 +2,8 @@
 
 #include "renderer/Projection.h"
 
+#include <cmath>
+
 struct Weights {
     float a, b, c;
 };
@@ -11,16 +13,18 @@ public:
     static constexpr float kMinArea2 = 1e-6f;
 
     Barycentric(const ScreenPoint &a, const ScreenPoint &b, const ScreenPoint &c) : _a(a), _b(b), _c(c) {
-        _area2 = std::abs((_b.x - _a.x) * (_c.y - _a.y) - (_b.y - _a.y) * (_c.x - _a.x));
+        // signed: the sign depends on orientation and cancels out in at(), so both orientations work
+        _area2 = (_b.x - _a.x) * (_c.y - _a.y) - (_b.y - _a.y) * (_c.x - _a.x);
     }
 
     /// Checks if area of the triangle is close to 0
-    [[nodiscard]] bool degenerate() const { return  _area2 < kMinArea2; }
+    [[nodiscard]] bool degenerate() const { return std::abs(_area2) < kMinArea2; }
 
     /// Returns barycentric weights for a given point (px, py)
     [[nodiscard]] Weights at(const float px, const float py) const {
-        const float b = std::abs((px - _a.x) * (_c.y - _a.y) - (_c.x - _a.x) * (py - _a.y)) / _area2;
-        const float c = std::abs((_b.x - _a.x) * (py - _a.y) - (px - _a.x) * (_b.y - _a.y)) / _area2;
+        // no abs(): outside the triangle some weights are negative, that keeps interpolation linear
+        const float b = ((px - _a.x) * (_c.y - _a.y) - (_c.x - _a.x) * (py - _a.y)) / _area2;
+        const float c = ((_b.x - _a.x) * (py - _a.y) - (px - _a.x) * (_b.y - _a.y)) / _area2;
 
         return {
             .a = 1 - b - c,
