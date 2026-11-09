@@ -8,6 +8,7 @@
 #include <cassert>
 
 #include "renderer/MouseRotation.h"
+#include "renderer/Shading.h"
 
 Viewport::Viewport(QWidget *parent) : QWidget(parent) {
     setMinimumSize(400, 400);
@@ -288,7 +289,14 @@ void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &p
 
 void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, const int colorIdx) {
     const QRgb color = kFillColors[colorIdx].rgb();
+    const ShadingColor sColor = {
+        .r = Shading::int2float(qRed(color)),
+        .g = Shading::int2float(qGreen(color)),
+        .b = Shading::int2float(qBlue(color))
+    };
     const auto &vertices = mesh.vertices();
+
+    const Shading shader;
 
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         const ScreenPoint a = proj.project(vertices[v1].after.P);
@@ -300,13 +308,21 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
         raster.fillTriangle(
             a, b, c,
             [&](const int x, const int y) {
-                const float z = interpolate(
-                    bary.at(
-                        static_cast<float>(x) + 0.5f,
-                        static_cast<float>(y) + 0.5f),
-                    a.z, b.z, c.z);
-                if (m_zbuffer.testAndSet(x, y, z))
-                    reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = color;
+                const Weights w = bary.at(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
+                const float z = interpolate(w, a.z, b.z, c.z);
+
+                if (m_zbuffer.testAndSet(x, y, z)) {
+                    // interpolate N
+                    const auto N = interpolate(w, vertices[v1].after.N, vertices[v2].after.N, vertices[v3].after.N);
+
+                    const auto [red, green, blue] = shader.calculateColor(sColor, N);
+
+                    reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = QColor(
+                        Shading::float2int(red),
+                        Shading::float2int(green),
+                        Shading::float2int(blue)
+                    ).rgb();
+                }
             }
         );
     }
