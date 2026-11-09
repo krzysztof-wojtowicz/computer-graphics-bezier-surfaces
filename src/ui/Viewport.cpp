@@ -76,6 +76,8 @@ void Viewport::paintEvent(QPaintEvent *) {
 
 void Viewport::resizeEvent(QResizeEvent *) {
     m_frame = QImage(size(), QImage::Format_RGB32);
+    m_zbuffer.resize(m_frame.width(), m_frame.height());
+
     render();
 }
 
@@ -111,6 +113,7 @@ void Viewport::render() {
 
     // fill viewport with white color
     m_frame.fill(Qt::white);
+    m_zbuffer.clear();
 
     if (m_meshes.empty()) return;
 
@@ -124,7 +127,7 @@ void Viewport::render() {
         if (m_showFill) {
             const auto raster = Rasterizer(w, h);
             int idx = 0;
-            for (const auto &mesh : m_meshes) {
+            for (const auto &mesh: m_meshes) {
                 fillTriangles(proj, mesh, raster, idx);
                 idx = ++idx % kColorCount;
             }
@@ -287,13 +290,22 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
     const auto &vertices = mesh.vertices();
 
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
+        const ScreenPoint a = proj.project(vertices[v1].after.P);
+        const ScreenPoint b = proj.project(vertices[v2].after.P);
+        const ScreenPoint c = proj.project(vertices[v3].after.P);
+        const Barycentric bary(a, b, c);
+        if (bary.degenerate()) continue;
+
         raster.fillTriangle(
-            proj.project(vertices[v1].after.P),
-            proj.project(vertices[v2].after.P),
-            proj.project(vertices[v3].after.P),
+            a, b, c,
             [&](const int x, const int y) {
-                auto *line = reinterpret_cast<QRgb *>(m_frame.scanLine(y));
-                line[x] = color;
+                const float z = interpolate(
+                    bary.at(
+                        static_cast<float>(x) + 0.5f,
+                        static_cast<float>(y) + 0.5f),
+                    a.z, b.z, c.z);
+                if (m_zbuffer.testAndSet(x, y, z))
+                    reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = color;
             }
         );
     }

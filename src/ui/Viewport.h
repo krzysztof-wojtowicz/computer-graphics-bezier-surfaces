@@ -13,6 +13,8 @@
 #include <array>
 
 #include "renderer/Projection.h"
+#include "renderer/ZBuffer.h"
+#include "renderer/Barycentric.h"
 #include "renderer/Rasterizer.h"
 
 class Viewport : public QWidget {
@@ -70,6 +72,7 @@ private:
     std::vector<Mesh> m_meshes;
     Mat3 m_rotation = rotationX(-1.0f) * rotationZ(0.5f);
     QPoint m_lastMousePos;
+    ZBuffer m_zbuffer = ZBuffer(m_frame.width(), m_frame.height());
 
     int m_resolution = Mesh::kDefaultResolution;
     bool m_showMesh = true;
