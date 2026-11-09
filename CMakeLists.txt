@@ -33,6 +33,7 @@ add_library(bezier_core STATIC
         src/renderer/MouseRotation.h
         src/renderer/Rasterizer.h
         src/renderer/Barycentric.h
+        src/renderer/ZBuffer.h
 )
 target_include_directories(bezier_core PUBLIC src)
 bezier_set_warnings(bezier_core)
