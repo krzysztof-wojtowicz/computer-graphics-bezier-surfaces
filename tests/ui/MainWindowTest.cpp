@@ -46,6 +46,7 @@ struct Panel {
     QCheckBox *polygon;
     QCheckBox *mesh;
     QCheckBox *points;
+    QCheckBox *fill;
 };
 
 Panel findPanel(const MainWindow &window) {
@@ -54,7 +55,8 @@ Panel findPanel(const MainWindow &window) {
             .label = findResolutionLabel(window),
             .polygon = findCheckBox(window, "Bezier polygon"),
             .mesh = findCheckBox(window, "Triangle mesh"),
-            .points = findCheckBox(window, "Mesh points")};
+            .points = findCheckBox(window, "Mesh points"),
+            .fill = findCheckBox(window, "Triangle fill")};
 }
 
 void assertPanelFound(const Panel &p) {
@@ -64,6 +66,7 @@ void assertPanelFound(const Panel &p) {
     ASSERT_NE(p.polygon, nullptr);
     ASSERT_NE(p.mesh, nullptr);
     ASSERT_NE(p.points, nullptr);
+    ASSERT_NE(p.fill, nullptr);
 }
 } // namespace
 
@@ -92,6 +95,7 @@ TEST(MainWindowPanelTest, ControlsStartWithViewportValues) {
     EXPECT_EQ(p.polygon->isChecked(), p.viewport->showPolygon());
     EXPECT_EQ(p.mesh->isChecked(), p.viewport->showMesh());
     EXPECT_EQ(p.points->isChecked(), p.viewport->showPoints());
+    EXPECT_EQ(p.fill->isChecked(), p.viewport->showFill());
 }
 
 TEST(MainWindowPanelTest, SliderChangesResolutionAndLabel) {
@@ -123,11 +127,17 @@ TEST(MainWindowPanelTest, EveryCheckBoxTogglesItsOwnLayer) {
 
     p.points->setChecked(false);
     EXPECT_FALSE(p.viewport->showPoints());
+    EXPECT_TRUE(p.viewport->showFill());
+
+    p.fill->setChecked(false);
+    EXPECT_FALSE(p.viewport->showFill());
 
     p.polygon->setChecked(true);
     p.mesh->setChecked(true);
     p.points->setChecked(true);
+    p.fill->setChecked(true);
     EXPECT_TRUE(p.viewport->showPolygon());
     EXPECT_TRUE(p.viewport->showMesh());
     EXPECT_TRUE(p.viewport->showPoints());
+    EXPECT_TRUE(p.viewport->showFill());
 }

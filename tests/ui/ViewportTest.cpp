@@ -470,6 +470,7 @@ Vec3 controlPointOfFlatSquare(const int i, const int j) {
 
 /// Viewport with only the triangle mesh visible, so every drawn pixel belongs to a mesh line
 void showOnlyMesh(Viewport &viewport) {
+    viewport.setShowFill(false);
     viewport.setShowMesh(true);
     viewport.setShowPolygon(false);
     viewport.setShowPoints(false);
@@ -505,7 +506,7 @@ void expectCellDrawnAsTwoTriangles(const Viewport &viewport, const QImage &img, 
     EXPECT_TRUE(lineNear(img, midpoint(a, d))) << "diagonal a-d of cell " << i << ", " << j;
     EXPECT_TRUE(lineNear(img, midpoint(b, d))) << "edge b-d of cell " << i << ", " << j;
     EXPECT_TRUE(lineNear(img, midpoint(c, d))) << "edge c-d of cell " << i << ", " << j;
-    // Triangles are only outlined, not filled (filling comes in stage 5)
+    // Only the outline is drawn here (showOnlyMesh hides the fill)
     const QPointF abd = (a + b + d) / 3.0, adc = (a + d + c) / 3.0;
     EXPECT_TRUE(isWhite(img, static_cast<int>(abd.x()), static_cast<int>(abd.y()))) << "triangle abd filled";
     EXPECT_TRUE(isWhite(img, static_cast<int>(adc.x()), static_cast<int>(adc.y()))) << "triangle adc filled";
@@ -595,15 +596,24 @@ bool sameAround(const QImage &a, const QImage &b, const QPointF &p) {
 }
 
 void showOnlyPolygon(Viewport &viewport) {
+    viewport.setShowFill(false);
     viewport.setShowMesh(false);
     viewport.setShowPolygon(true);
     viewport.setShowPoints(false);
 }
 
 void showOnlyPoints(Viewport &viewport) {
+    viewport.setShowFill(false);
     viewport.setShowMesh(false);
     viewport.setShowPolygon(false);
     viewport.setShowPoints(true);
+}
+
+void showOnlyFill(Viewport &viewport) {
+    viewport.setShowFill(true);
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(false);
 }
 
 /// All 24 edges P[i][j]-P[i+1][j] and P[i][j]-P[i][j+1] are drawn, the diagonals P[i][j]-P[i+1][j+1] are not
@@ -696,10 +706,144 @@ TEST(ViewportPolygonTest, NeighbouringSurfacesHaveDifferentColors) {
     }
 }
 
+// ---------- 5.5: triangle fill ----------
+
+namespace {
+/// Flat square at z = 0 with the given center and half side, evenly spaced control points
+BezierSurface flatSquareAround(const Vec3 &center, const float halfSide) {
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = center + Vec3{.x = -halfSide + 2.0f * halfSide * static_cast<float>(i) / 3.0f,
+                                    .y = -halfSide + 2.0f * halfSide * static_cast<float>(j) / 3.0f,
+                                    .z = 0.0f};
+    return BezierSurface(g);
+}
+
+/// Point of flatSquare() at parameters (s, t), s, t in [0, 1] cover the square
+Vec3 squarePoint(const float s, const float t) {
+    return {.x = -kHalfSide + 2.0f * kHalfSide * s, .y = -kHalfSide + 2.0f * kHalfSide * t, .z = 0.0f};
+}
+
+/// Number of samples (s, t) in [margin, 1 - margin]^2 whose pixel is not drawn
+int undrawnSamplesInside(const Viewport &viewport, const QImage &img, const float margin) {
+    int undrawn = 0;
+    for (float s = margin; s <= 1.0f - margin; s += 0.01f)
+        for (float t = margin; t <= 1.0f - margin; t += 0.01f)
+            if (!drawnAt(img, screenPoint(viewport, squarePoint(s, t))))
+                ++undrawn;
+    return undrawn;
+}
+
+/// p lies in the convex polygon (any orientation), up to `tolerance` px outside its edges
+bool insideConvex(const std::vector<QPointF> &polygon, const QPointF &p, const double tolerance) {
+    bool anyNegative = false, anyPositive = false;
+    for (size_t k = 0; k < polygon.size(); ++k) {
+        const QPointF a = polygon[k], b = polygon[(k + 1) % polygon.size()];
+        const QPointF e = b - a, ap = p - a;
+        const double signedDistance = (e.x() * ap.y() - e.y() * ap.x()) / std::hypot(e.x(), e.y());
+        anyNegative |= signedDistance < -tolerance;
+        anyPositive |= signedDistance > tolerance;
+    }
+    return !(anyNegative && anyPositive);
+}
+} // namespace
+
+TEST(ViewportFillTest, FillCoversWholeSurface) {
+    // 0.02 of the side is ~8 px from the border, so every sampled pixel center is inside the square
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquare()});
+    EXPECT_EQ(undrawnSamplesInside(viewport, renderViewport(viewport, kMeshImageSize), 0.02f), 0);
+}
+
+TEST(ViewportFillTest, FillFollowsRotation) {
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquare()});
+    renderViewport(viewport, kMeshImageSize);
+    drag(viewport, {100, 100}, {150, 70});
+    EXPECT_EQ(undrawnSamplesInside(viewport, grabImage(viewport), 0.02f), 0);
+}
+
+TEST(ViewportFillTest, FilledPixelsHaveCentersInsideSurface) {
+    // A pixel is filled only when its center lies in the projected square (on its border at most)
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquare()});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    const std::vector<QPointF> square = {
+        screenPoint(viewport, squarePoint(0, 0)), screenPoint(viewport, squarePoint(1, 0)),
+        screenPoint(viewport, squarePoint(1, 1)), screenPoint(viewport, squarePoint(0, 1))};
+    const std::vector<QPoint> pixels = drawnPixels(img);
+    ASSERT_FALSE(pixels.empty());
+    int outside = 0;
+    for (const QPoint &p : pixels)
+        if (!insideConvex(square, QPointF(p.x() + 0.5, p.y() + 0.5), 1e-3))
+            ++outside;
+    EXPECT_EQ(outside, 0);
+}
+
+TEST(ViewportFillTest, LinesAreDrawnOverFill) {
+    // If the fill were drawn after the mesh it would paint over the inner edges,
+    // so around an edge the image would look the same as with the fill alone
+    Viewport fillOnly;
+    showOnlyFill(fillOnly);
+    fillOnly.setSurfaces({flatSquare()});
+    Viewport fillAndMesh;
+    showOnlyFill(fillAndMesh);
+    fillAndMesh.setShowMesh(true);
+    fillAndMesh.setSurfaces({flatSquare()});
+    const QPointF ab = midpoint(screenPoint(fillOnly, gridPoint(4, 5)), screenPoint(fillOnly, gridPoint(5, 5)));
+    EXPECT_FALSE(sameAround(renderViewport(fillOnly, kMeshImageSize), renderViewport(fillAndMesh, kMeshImageSize), ab));
+}
+
+TEST(ViewportFillTest, HiddenFillLeavesImageWhite) {
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquare()});
+    ASSERT_TRUE(drawnAt(showViewport(viewport, kMeshImageSize), screenPoint(viewport, squarePoint(0.3f, 0.6f))));
+    viewport.setShowFill(false);
+    EXPECT_TRUE(drawnPixels(grabImage(viewport)).empty());
+}
+
+TEST(ViewportFillTest, NeighbouringSurfacesHaveDifferentFillColors) {
+    const Vec3 c1{-2.0f, 0.0f, 0.0f}, c2{2.0f, 0.0f, 0.0f};
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({flatSquareAround(c1, 1.0f), flatSquareAround(c2, 1.0f)});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    const QPointF s1 = screenPoint(viewport, c1), s2 = screenPoint(viewport, c2);
+    ASSERT_TRUE(drawnAt(img, s1));
+    ASSERT_TRUE(drawnAt(img, s2));
+    EXPECT_NE(colorAt(img, s1), colorAt(img, s2));
+}
+
+TEST(ViewportFillTest, DegenerateSurfacesDoNotCrash) {
+    // A surface collapsed to a point and a flat one seen exactly edge-on (all triangles have zero area on screen):
+    // before = R^T * q gives after = q, a square in the plane x = 0 of the scene
+    Viewport viewport;
+    showOnlyFill(viewport);
+    const Mat3 back = viewport.rotation().transposed();
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = back * Vec3{.x = 0.0f,
+                                  .y = -2.0f + 4.0f * static_cast<float>(i) / 3.0f,
+                                  .z = -2.0f + 4.0f * static_cast<float>(j) / 3.0f};
+    viewport.setSurfaces({pointSurface({0.0f, 0.0f, 0.0f}), BezierSurface(g)});
+    const QImage img = renderViewport(viewport, kMeshImageSize);
+    // at most a 1 px wide vertical line through the center
+    const std::vector<QPoint> pixels = drawnPixels(img);
+    if (!pixels.empty())
+        EXPECT_LE(boundingBox(pixels).width(), 1);
+}
+
 // ---------- 4.7: display flags and resolution ----------
 
 TEST(ViewportControlsTest, DefaultsShowEverythingAtDefaultResolution) {
     const Viewport viewport;
+    EXPECT_TRUE(viewport.showFill());
     EXPECT_TRUE(viewport.showMesh());
     EXPECT_TRUE(viewport.showPolygon());
     EXPECT_TRUE(viewport.showPoints());
@@ -714,16 +858,20 @@ TEST(ViewportControlsTest, SettersUpdateFlags) {
     EXPECT_FALSE(viewport.showPolygon());
     viewport.setShowPoints(false);
     EXPECT_FALSE(viewport.showPoints());
+    viewport.setShowFill(false);
+    EXPECT_FALSE(viewport.showFill());
     viewport.setShowMesh(true);
     EXPECT_TRUE(viewport.showMesh());
     EXPECT_FALSE(viewport.showPolygon());
     EXPECT_FALSE(viewport.showPoints());
+    EXPECT_FALSE(viewport.showFill());
 }
 
 TEST(ViewportControlsTest, HidingAllLayersGivesWhiteImage) {
     Viewport viewport;
     viewport.setSurfaces(assetSurfaces());
     ASSERT_FALSE(drawnPixels(showViewport(viewport, {500, 500})).empty());
+    viewport.setShowFill(false);
     viewport.setShowMesh(false);
     viewport.setShowPolygon(false);
     viewport.setShowPoints(false);
@@ -731,7 +879,7 @@ TEST(ViewportControlsTest, HidingAllLayersGivesWhiteImage) {
 }
 
 TEST(ViewportControlsTest, EveryLayerAloneDrawsSomething) {
-    for (auto *show : {&showOnlyMesh, &showOnlyPolygon, &showOnlyPoints}) {
+    for (auto *show : {&showOnlyFill, &showOnlyMesh, &showOnlyPolygon, &showOnlyPoints}) {
         Viewport viewport;
         show(viewport);
         viewport.setSurfaces({flatSquare()});
@@ -741,6 +889,7 @@ TEST(ViewportControlsTest, EveryLayerAloneDrawsSomething) {
 
 TEST(ViewportControlsTest, HiddenMeshLeavesEdgesWhite) {
     Viewport viewport;
+    viewport.setShowFill(false); // the fill covers the edges too
     viewport.setSurfaces({flatSquare()});
     const QPointF ab = midpoint(screenPoint(viewport, gridPoint(4, 5)), screenPoint(viewport, gridPoint(5, 5)));
     ASSERT_TRUE(lineNear(showViewport(viewport, kMeshImageSize), ab));
@@ -776,10 +925,12 @@ TEST(ViewportControlsTest, ToggledLayerBackOnRestoresImage) {
     Viewport viewport;
     viewport.setSurfaces(assetSurfaces());
     const QImage before = showViewport(viewport, {500, 500});
+    viewport.setShowFill(false);
     viewport.setShowMesh(false);
     viewport.setShowPolygon(false);
     viewport.setShowPoints(false);
     ASSERT_NE(grabImage(viewport), before);
+    viewport.setShowFill(true);
     viewport.setShowMesh(true);
     viewport.setShowPolygon(true);
     viewport.setShowPoints(true);
