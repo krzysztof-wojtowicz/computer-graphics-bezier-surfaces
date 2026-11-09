@@ -120,9 +120,6 @@ void Viewport::render() {
         const int h = m_frame.height();
         const auto proj = Projection(w, h);
 
-        QPainter painter(&m_frame);
-        painter.setRenderHint(QPainter::Antialiasing);
-
         // fill triangles
         if (m_showFill) {
             const auto raster = Rasterizer(w, h);
@@ -132,6 +129,9 @@ void Viewport::render() {
                 idx = ++idx % kColorCount;
             }
         }
+
+        QPainter painter(&m_frame);
+        painter.setRenderHint(QPainter::Antialiasing);
 
         // draw every triangle for every mesh
         if (m_showMesh) {
