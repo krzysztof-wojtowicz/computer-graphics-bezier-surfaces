@@ -19,18 +19,22 @@ public:
         assert(value >= 0 && value <= 1);
         _kd = value;
     }
+
     void setKs(const float value) {
         assert(value >= 0 && value <= 1);
         _ks = value;
     }
+
     void setIl(const ShadingColor rgb) {
         assert(rgb.r >= 0 && rgb.r <= 1 && rgb.g >= 0 && rgb.g <= 1 && rgb.b >= 0 && rgb.b <= 1);
         _il = rgb;
     }
+
     void setM(const float m) {
-        assert(m >= 0 && m <= 100);
+        assert(m >= 1 && m <= 100);
         _m = m;
     }
+
     void setL(const Vec3 v) {
         _l = normalized(v);
     }
@@ -38,7 +42,7 @@ public:
     // --- METHODS ---
     /// Converts float values [0,1] to int values [0,255]
     static int float2int(const float color) {
-        return std::min(std::max(static_cast<int>(color * 255.0f), 0), 255);
+        return static_cast<int>(std::lround(std::min(std::max(color * 255.0f, 0.0f), 255.0f)));
     }
 
     /// Converts int values [0,255] to float values [0,1]
@@ -48,10 +52,13 @@ public:
 
     [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 n) const {
         // calculate cos(angle(N, L)) and cos^m(angle(V,R))
-        const Vec3 N = normalized(n);
+        Vec3 N = normalized(n);
+        if (N.z < 0)
+            N = -N; // for the bottom of the surface
+
         const Vec3 R = dot(N, _l) * 2.0f * N - _l;
-        const float cosNL = _kd * std::max(0.0f, std::cos(angle(N, _l)));
-        const float cosVR = _ks * std::pow(std::max(0.0f, std::cos(angle(_v, R))), _m);
+        const float cosNL = _kd * std::max(0.0f, dot(N, _l));
+        const float cosVR = _ks * std::pow(std::max(0.0f, dot(_v, R)), _m);
 
         // calculate each component (R, G, B)
         return {
@@ -65,7 +72,7 @@ private:
     float _kd = 1.0f; // d impact factor from [0,1]
     float _ks = 1.0f; // s impact factor from [0,1]
     ShadingColor _il = ShadingColor{.r = 1, .g = 1, .b = 1}; // light color, default is white
-    float _m = 50.0f; // surface character factor from [0,100]
+    float _m = 50.0f; // surface character factor from [1,100]
     Vec3 _v = Vec3{.x = 0, .y = 0, .z = 1}; // V vector [0,0,1]
     Vec3 _l = normalized(Vec3{.x = 0.1f, .y = 0.3f, .z = 0.5f}); // light direction
 };
