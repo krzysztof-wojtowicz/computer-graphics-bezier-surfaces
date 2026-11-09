@@ -36,8 +36,15 @@ public:
     }
 
     // --- METHODS ---
-    static int float2int(const float color) { return static_cast<int>(color * 255.0f); }
-    static float int2float(const int color) { return static_cast<float>(color) / 255.0f; }
+    /// Converts float values [0,1] to int values [0,255]
+    static int float2int(const float color) {
+        return std::min(std::max(static_cast<int>(color * 255.0f), 0), 255);
+    }
+
+    /// Converts int values [0,255] to float values [0,1]
+    static float int2float(const int color) {
+        return std::min(std::max(static_cast<float>(color) / 255.0f, 0.0f), 1.0f);
+    }
 
     [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 N) const {
         // calculate cos(angle(N, L)) and cos^m(angle(V,R))
