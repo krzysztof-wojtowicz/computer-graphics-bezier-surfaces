@@ -35,8 +35,8 @@ public:
         _m = m;
     }
 
-    void setL(const Vec3 v) {
-        _l = normalized(v);
+    void setLightPosition(const Vec3 v) {
+        _lightPos = v;
     }
 
     // --- GETTERS ---
@@ -44,6 +44,7 @@ public:
     [[nodiscard]] float ks() const { return _ks; }
     [[nodiscard]] float m() const { return _m; }
     [[nodiscard]] ShadingColor il() const { return _il; }
+    [[nodiscard]] Vec3 lightPosition() const { return _lightPos; }
 
     // --- METHODS ---
     /// Converts float values [0,1] to int values [0,255];
@@ -56,14 +57,17 @@ public:
         return std::min(std::max(static_cast<float>(color) / 255.0f, 0.0f), 1.0f);
     }
 
-    [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 n) const {
+    [[nodiscard]] ShadingColor calculateColor(const ShadingColor &io, const Vec3 n, const Vec3 P) const {
+        // calculate light direction
+        const Vec3 L = normalized(_lightPos - P);
+
         // calculate cos(angle(N, L)) and cos^m(angle(V,R))
         Vec3 N = normalized(n);
         if (N.z < 0)
             N = -N; // for the bottom of the surface
 
-        const Vec3 R = dot(N, _l) * 2.0f * N - _l;
-        const float cosNL = _kd * std::max(0.0f, dot(N, _l));
+        const Vec3 R = dot(N, L) * 2.0f * N - L;
+        const float cosNL = _kd * std::max(0.0f, dot(N, L));
         const float cosVR = _ks * std::pow(std::max(0.0f, dot(_v, R)), _m);
 
         // calculate each component (R, G, B)
@@ -80,5 +84,5 @@ private:
     ShadingColor _il = ShadingColor{.r = 1, .g = 1, .b = 1}; // light color, default is white
     float _m = 50.0f; // surface character factor from [1,100]
     Vec3 _v = Vec3{.x = 0, .y = 0, .z = 1}; // V vector [0,0,1]
-    Vec3 _l = normalized(Vec3{.x = 0.1f, .y = 0.3f, .z = 0.5f}); // light direction
+    Vec3 _lightPos = Vec3{.x = 10.0f, .y = 0.0f, .z = 1.0f}; // light position
 };

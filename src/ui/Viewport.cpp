@@ -350,8 +350,9 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
                 if (m_zbuffer.testAndSet(x, y, z)) {
                     // interpolate N
                     const auto N = interpolate(w, vertices[v1].after.N, vertices[v2].after.N, vertices[v3].after.N);
+                    const auto P = interpolate(w, vertices[v1].after.P, vertices[v2].after.P, vertices[v3].after.P);
 
-                    const auto [red, green, blue] = m_shader.calculateColor(sColor, N);
+                    const auto [red, green, blue] = m_shader.calculateColor(sColor, N, P);
 
                     reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = qRgb(
                         Shading::float2int(red),

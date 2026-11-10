@@ -16,7 +16,7 @@ Shading diffuseOnly(const Vec3 &light) {
     Shading s;
     s.setKd(1.0f);
     s.setKs(0.0f);
-    s.setL(light);
+    s.setLightPosition(light);
     return s;
 }
 
@@ -25,7 +25,7 @@ Shading specularOnly(const Vec3 &light, const float m) {
     s.setKd(0.0f);
     s.setKs(1.0f);
     s.setM(m);
-    s.setL(light);
+    s.setLightPosition(light);
     return s;
 }
 
@@ -125,7 +125,7 @@ TEST(ShadingTest, ResultDoesNotDependOnNormalLength) {
     s.setKd(0.6f);
     s.setKs(0.4f);
     s.setM(5.0f);
-    s.setL(tilted(0.5f));
+    s.setLightPosition(tilted(0.5f));
     const Vec3 n = normalized(Vec3{.x = -0.2f, .y = 0.1f, .z = 1.0f});
     const ShadingColor expected = s.calculateColor(kWhite, n);
     for (const float scale : {0.2f, 0.9f, 3.0f}) {
@@ -140,9 +140,9 @@ TEST(ShadingTest, ResultDoesNotDependOnLightVectorLength) {
     Shading unit;
     unit.setKs(0.5f);
     unit.setM(3.0f);
-    unit.setL(light);
+    unit.setLightPosition(light);
     Shading longer = unit;
-    longer.setL(light * 7.0f);
+    longer.setLightPosition(light * 7.0f);
     expectColorNear(longer.calculateColor(kWhite, n), unit.calculateColor(kWhite, n));
 }
 
@@ -151,7 +151,7 @@ TEST(ShadingTest, BackSideIsLitLikeFrontSide) {
     Shading s;
     s.setKs(0.5f);
     s.setM(5.0f);
-    s.setL(tilted(0.4f));
+    s.setLightPosition(tilted(0.4f));
     const Vec3 n = normalized(Vec3{.x = 0.3f, .y = -0.1f, .z = 0.8f});
     const ShadingColor front = s.calculateColor(kWhite, n);
     ASSERT_GT(front.r, 0.1f);
@@ -162,7 +162,7 @@ TEST(ShadingTest, LightAndObjectColorsMultiplyPerComponent) {
     Shading s;
     s.setKs(0.5f);
     s.setM(5.0f);
-    s.setL(tilted(0.2f));
+    s.setLightPosition(tilted(0.2f));
     const Vec3 n = tilted(-0.1f);
     const float gray = s.calculateColor(kWhite, n).r;
     ASSERT_GT(gray, 0.1f);
@@ -186,7 +186,7 @@ TEST(ShadingTest, ColorIsNeverNegative) {
     s.setKs(0.5f);
     s.setM(3.0f);
     for (int i = 0; i < 1000; ++i) {
-        s.setL({.x = coord(gen), .y = coord(gen), .z = coord(gen) + 1.5f});
+        s.setLightPosition({.x = coord(gen), .y = coord(gen), .z = coord(gen) + 1.5f});
         const ShadingColor c = s.calculateColor(kWhite, {.x = coord(gen), .y = coord(gen), .z = coord(gen) + 1.5f});
         ASSERT_GE(c.r, 0.0f);
     }
