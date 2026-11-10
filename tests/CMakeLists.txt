@@ -21,6 +21,7 @@ add_executable(core_tests
         geometry/BezierSurfaceTest.cpp
         geometry/SurfaceParserTest.cpp
         geometry/MeshTest.cpp
+        geometry/BezierCurveTest.cpp
         renderer/ProjectionTest.cpp
         renderer/MouseRotationTest.cpp
         renderer/RasterizerTest.cpp
