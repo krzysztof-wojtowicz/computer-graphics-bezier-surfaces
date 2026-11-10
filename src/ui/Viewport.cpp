@@ -5,8 +5,9 @@
 #include <QPointF>
 #include <QLineF>
 #include <QPen>
+#include <algorithm>
 #include <cassert>
-#include <ranges>
+#include <cmath>
 
 #include "renderer/MouseRotation.h"
 #include "renderer/Shading.h"
@@ -14,6 +15,36 @@
 
 Viewport::Viewport(QWidget *parent) : QWidget(parent) {
     setMinimumSize(400, 400);
+
+    m_animationTimer.setInterval(kAnimationIntervalMs);
+    connect(&m_animationTimer, &QTimer::timeout, this, &Viewport::onAnimationTick);
+}
+
+void Viewport::setAnimating(const bool on) {
+    if (on == isAnimating()) return;
+
+    if (on) {
+        m_animationClock.start(); // first dt measured from now, not from an old or invalid clock
+        m_animationTimer.start();
+    } else {
+        m_animationTimer.stop();
+    }
+}
+
+void Viewport::stepAnimation(const float seconds) {
+    const auto segments = static_cast<float>(m_lightPath.segments());
+    // wrap so t stays small: float precision of t + dt drops as t grows
+    m_lightT = std::fmod(m_lightT + kLightSpeed * seconds, segments);
+    if (m_lightT < 0) m_lightT += segments;
+
+    render(); // render() takes the light position from m_lightT
+    update();
+}
+
+/// QTimer intervals are not exact (render time delays the next tick), so the step uses measured time
+void Viewport::onAnimationTick() {
+    const float dt = static_cast<float>(m_animationClock.restart()) / 1000.0f;
+    stepAnimation(std::min(dt, kMaxAnimationStep));
 }
 
 void Viewport::setResolution(const int n) {
@@ -383,8 +414,7 @@ void Viewport::drawLightPath(const Projection &proj, QPainter &painter) const {
     const int n = static_cast<int>(lightPoints.size());
 
     // project points
-    std::vector<ScreenPoint> lightScreenPoints;
-    lightScreenPoints.reserve(n);
+    std::vector<ScreenPoint> lightScreenPoints(n);
     for (int i = 0; i < n; ++i) {
         lightScreenPoints[i] = proj.project(lightPoints[i]);
     }

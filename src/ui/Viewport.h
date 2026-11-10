@@ -10,6 +10,8 @@
 #include <QImage>
 #include <QPoint>
 #include <QMouseEvent>
+#include <QTimer>
+#include <QElapsedTimer>
 #include <vector>
 #include <array>
 
@@ -35,6 +37,8 @@ public:
     [[nodiscard]] float m() const { return m_shader.m(); }
     [[nodiscard]] QColor lightColor() const;
     [[nodiscard]] Vec3 lightPosition() const { return m_shader.lightPosition(); }
+    [[nodiscard]] float lightT() const { return m_lightT; }
+    [[nodiscard]] bool isAnimating() const { return m_animationTimer.isActive(); }
 
     // --- SETTERS ---
     void setResolution(int n);
@@ -49,6 +53,11 @@ public:
 
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
 
+    // --- ANIMATION ---
+    void setAnimating(bool on);
+    /// Moves the light along its path by the given time
+    void stepAnimation(float seconds);
+
 protected:
     // --- QT EVENTS ---
     void paintEvent(QPaintEvent *event) override;
@@ -60,6 +69,9 @@ protected:
 private:
     // --- CONST ---
     static constexpr float kPointRadius = 3;
+    static constexpr int kAnimationIntervalMs = 16; // ~60 fps, real rate depends on render time
+    static constexpr float kLightSpeed = 0.5f; // curve segments per second (4 segments = 8 s per lap)
+    static constexpr float kMaxAnimationStep = 0.1f; // seconds; avoids a jump after the window was blocked
     static constexpr int kColorCount = 3;
     static constexpr QColor kMeshColors[kColorCount] = {
         QColor(100, 0, 0),
@@ -86,7 +98,9 @@ private:
     Shading m_shader; // shader for fill color calculation with light model
     BezierCurve m_lightPath = BezierCurve::circle(5.15f, 8.0f); // light path for animation
 
-    float m_lightT = 0.0f; // timer for light animation
+    float m_lightT = 0.0f; // light position parameter on m_lightPath, kept in [0, segments)
+    QTimer m_animationTimer; // fires animation steps
+    QElapsedTimer m_animationClock; // real time between steps, so speed doesn't depend on frame rate
     int m_resolution = Mesh::kDefaultResolution; // mesh resolution
     bool m_showMesh = true;
     bool m_showPolygon = true;
@@ -96,6 +110,7 @@ private:
     // --- RENDERING ---
     void render();
     void applyRotationToMeshes();
+    void onAnimationTick();
 
     [[nodiscard]] std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
 

@@ -31,6 +31,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // Create new Viewport widget and add it to the layout
     m_viewport = new Viewport(central);
     layout->addWidget(m_viewport, 1);
+    m_viewport->setAnimating(true); // temporary: until the start/stop button exists
 
     // Create side panel with fixed width and vertical layout
     auto *panel = new QWidget(central);
