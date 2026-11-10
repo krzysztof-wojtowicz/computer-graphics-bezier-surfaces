@@ -4,6 +4,7 @@
 #include "math/Mat3.h"
 #include "math/Vec3.h"
 #include "geometry/BezierSurface.h"
+#include "geometry/BezierCurve.h"
 
 #include <QWidget>
 #include <QImage>
@@ -14,7 +15,6 @@
 
 #include "renderer/Projection.h"
 #include "renderer/ZBuffer.h"
-#include "renderer/Barycentric.h"
 #include "renderer/Rasterizer.h"
 #include "renderer/Shading.h"
 
@@ -34,6 +34,7 @@ public:
     [[nodiscard]] float ks() const { return m_shader.ks(); }
     [[nodiscard]] float m() const { return m_shader.m(); }
     [[nodiscard]] QColor lightColor() const;
+    [[nodiscard]] Vec3 lightPosition() const { return m_shader.lightPosition(); }
 
     // --- SETTERS ---
     void setResolution(int n);
@@ -78,13 +79,15 @@ private:
 
     // --- STATES ---
     QImage m_frame;
-    std::vector<Mesh> m_meshes;
-    Mat3 m_rotation = rotationX(-1.0f) * rotationZ(0.5f);
-    QPoint m_lastMousePos;
+    std::vector<Mesh> m_meshes; // meshes for all surfaces
+    Mat3 m_rotation = rotationX(-1.0f) * rotationZ(0.5f); // current rotation
+    QPoint m_lastMousePos; // last mouse position
     ZBuffer m_zbuffer; // sized in resizeEvent, like m_frame
-    Shading m_shader;
+    Shading m_shader; // shader for fill color calculation with light model
+    BezierCurve m_lightPath = BezierCurve::circle(5.15f, 8.0f); // light path for animation
 
-    int m_resolution = Mesh::kDefaultResolution;
+    float m_lightT = 0.0f; // timer for light animation
+    int m_resolution = Mesh::kDefaultResolution; // mesh resolution
     bool m_showMesh = true;
     bool m_showPolygon = true;
     bool m_showPoints = true;
@@ -102,4 +105,5 @@ private:
     void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
     void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
     void fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, int colorIdx);
+    void drawLightPath(const Projection &proj, QPainter &painter) const;
 };

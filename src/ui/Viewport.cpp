@@ -6,9 +6,11 @@
 #include <QLineF>
 #include <QPen>
 #include <cassert>
+#include <ranges>
 
 #include "renderer/MouseRotation.h"
 #include "renderer/Shading.h"
+#include "renderer/Barycentric.h"
 
 Viewport::Viewport(QWidget *parent) : QWidget(parent) {
     setMinimumSize(400, 400);
@@ -151,6 +153,9 @@ void Viewport::mouseReleaseEvent(QMouseEvent *) {
 void Viewport::render() {
     if (m_frame.isNull()) return;
 
+    // update light position
+    m_shader.setLightPosition(m_lightPath.evaluate(m_lightT));
+
     // fill viewport with white color
     m_frame.fill(Qt::white);
     m_zbuffer.clear();
@@ -210,6 +215,11 @@ void Viewport::render() {
                 drawControlPoints(proj, mesh, painter, idx);
                 idx = ++idx % kColorCount;
             }
+        }
+
+        // draw light path and current light position
+        {
+            drawLightPath(proj, painter);
         }
     } // destructor destroys painter and ends drawing on m_frame
 }
@@ -363,4 +373,36 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
             }
         );
     }
+}
+
+void Viewport::drawLightPath(const Projection &proj, QPainter &painter) const {
+    painter.setPen(QPen(QColor(0, 0, 0), 1, Qt::DashLine));
+
+    // get points representing light path
+    const auto lightPoints = m_lightPath.sample(32);
+    const int n = static_cast<int>(lightPoints.size());
+
+    // project points
+    std::vector<ScreenPoint> lightScreenPoints;
+    lightScreenPoints.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        lightScreenPoints[i] = proj.project(lightPoints[i]);
+    }
+
+    // draw lines
+    for (int i = 0; i < n; ++i) {
+        painter.drawLine(QLineF(
+            QPointF(lightScreenPoints[i].x, lightScreenPoints[i].y),
+            QPointF(lightScreenPoints[(i + 1) % n].x, lightScreenPoints[(i + 1) % n].y)
+        ));
+    }
+
+    painter.setPen(QPen(QColor(0, 0, 0), 1, Qt::SolidLine));
+    painter.setBrush(lightColor());
+    const auto sp = proj.project(lightPosition());
+    painter.drawEllipse(
+        QPointF(sp.x, sp.y),
+        kPointRadius * 3,
+        kPointRadius * 3);
+
 }
