@@ -29,6 +29,8 @@ add_library(bezier_core STATIC
         src/geometry/SurfaceParser.cpp
         src/geometry/Mesh.h
         src/geometry/Mesh.cpp
+        src/geometry/BezierCurve.h
+        src/geometry/BezierCurve.cpp
         src/renderer/Projection.h
         src/renderer/MouseRotation.h
         src/renderer/Rasterizer.h
