@@ -41,7 +41,8 @@ public:
     [[nodiscard]] float ks() const { return m_shader.ks(); }
     [[nodiscard]] float m() const { return m_shader.m(); }
     [[nodiscard]] QColor lightColor() const;
-    [[nodiscard]] Vec3 lightPosition() const { return m_shader.lightPosition(); }
+    /// From the path, not from the shader: valid also before the first render()
+    [[nodiscard]] Vec3 lightPosition() const { return m_lightPath.evaluate(m_lightT); }
     [[nodiscard]] float lightT() const { return m_lightT; }
     [[nodiscard]] bool isAnimating() const { return m_animationTimer.isActive(); }
     [[nodiscard]] float lightZ() const { return m_lightPath.z(); }

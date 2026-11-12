@@ -10,6 +10,8 @@
 namespace {
 constexpr ShadingColor kWhite{.r = 1.0f, .g = 1.0f, .b = 1.0f};
 constexpr Vec3 kViewer{.x = 0.0f, .y = 0.0f, .z = 1.0f};
+/// Shaded point for the direction tests: with P = 0 the light position is also the direction to the light
+constexpr Vec3 kOrigin{.x = 0.0f, .y = 0.0f, .z = 0.0f};
 
 /// Shading with only one of the two terms switched on, so each can be checked against its own formula
 Shading diffuseOnly(const Vec3 &light) {
@@ -52,7 +54,7 @@ TEST(ShadingTest, NormalPointingAtLightGivesFullDiffuse) {
     s.setKd(0.7f);
     s.setIl({.r = 1.0f, .g = 0.5f, .b = 0.25f});
     const ShadingColor io{.r = 0.2f, .g = 0.5f, .b = 1.0f};
-    expectColorNear(s.calculateColor(io, {.x = 1.0f, .y = 2.0f, .z = 3.0f}),
+    expectColorNear(s.calculateColor(io, {.x = 1.0f, .y = 2.0f, .z = 3.0f}, kOrigin),
                     {.r = 0.7f * 0.2f, .g = 0.7f * 0.5f * 0.5f, .b = 0.7f * 0.25f});
 }
 
@@ -60,26 +62,26 @@ TEST(ShadingTest, DiffuseFollowsLambertCosine) {
     const Shading s = diffuseOnly(kViewer);
     for (const float angle : {0.0f, 0.3f, kPi / 4, 1.2f, kPi / 2 - 0.01f}) {
         SCOPED_TRACE(angle);
-        expectGray(s.calculateColor(kWhite, tilted(angle)), std::cos(angle));
+        expectGray(s.calculateColor(kWhite, tilted(angle), kOrigin), std::cos(angle));
     }
 }
 
 TEST(ShadingTest, LightAlongTheSurfaceGivesNoDiffuse) {
     const Shading s = diffuseOnly({.x = 1.0f, .y = 0.0f, .z = 0.0f});
-    expectGray(s.calculateColor(kWhite, kViewer), 0.0f);
+    expectGray(s.calculateColor(kWhite, kViewer, kOrigin), 0.0f);
 }
 
 TEST(ShadingTest, LightBehindTheSurfaceGivesNoDiffuse) {
     // negative cosine is clamped to 0, not subtracted
     const Shading s = diffuseOnly({.x = 1.0f, .y = 0.0f, .z = -1.0f});
-    expectGray(s.calculateColor(kWhite, kViewer), 0.0f);
+    expectGray(s.calculateColor(kWhite, kViewer, kOrigin), 0.0f);
 }
 
 TEST(ShadingTest, DiffuseIsLinearInKd) {
     Shading s = diffuseOnly(tilted(0.4f));
-    const ShadingColor full = s.calculateColor(kWhite, kViewer);
+    const ShadingColor full = s.calculateColor(kWhite, kViewer, kOrigin);
     s.setKd(0.25f);
-    expectGray(s.calculateColor(kWhite, kViewer), 0.25f * full.r);
+    expectGray(s.calculateColor(kWhite, kViewer, kOrigin), 0.25f * full.r);
 }
 
 // ---------- specular term: ks * IL * IO * cos^m(V, R), R = 2<N,L>N - L ----------
@@ -90,7 +92,7 @@ TEST(ShadingTest, SpecularFollowsCosinePowerM) {
         for (const float angle : {0.1f, 0.3f, 0.6f, 1.0f}) {
             SCOPED_TRACE(testing::Message() << "m = " << m << ", angle = " << angle);
             const Shading s = specularOnly(tilted(angle), m);
-            expectGray(s.calculateColor(kWhite, kViewer), std::pow(std::cos(angle), m));
+            expectGray(s.calculateColor(kWhite, kViewer, kOrigin), std::pow(std::cos(angle), m));
         }
     }
 }
@@ -104,7 +106,7 @@ TEST(ShadingTest, ReflectionTowardsViewerGivesFullSpecularWithoutNaN) {
     for (int i = 0; i < 1000; ++i) {
         const Vec3 light{.x = coord(gen), .y = coord(gen), .z = up(gen)};
         const Shading s = specularOnly(light, 100.0f);
-        const ShadingColor c = s.calculateColor(kWhite, normalized(normalized(light) + kViewer));
+        const ShadingColor c = s.calculateColor(kWhite, normalized(normalized(light) + kViewer), kOrigin);
         ASSERT_FALSE(std::isnan(c.r)) << "light " << testing::PrintToString(light);
         ASSERT_NEAR(c.r, 1.0f, 1e-3f) << "light " << testing::PrintToString(light);
     }
@@ -112,9 +114,81 @@ TEST(ShadingTest, ReflectionTowardsViewerGivesFullSpecularWithoutNaN) {
 
 TEST(ShadingTest, SpecularIsSharperForBiggerM) {
     const Vec3 light = tilted(0.3f);
-    const float soft = specularOnly(light, 2.0f).calculateColor(kWhite, kViewer).r;
-    const float sharp = specularOnly(light, 80.0f).calculateColor(kWhite, kViewer).r;
+    const float soft = specularOnly(light, 2.0f).calculateColor(kWhite, kViewer, kOrigin).r;
+    const float sharp = specularOnly(light, 80.0f).calculateColor(kWhite, kViewer, kOrigin).r;
     EXPECT_GT(soft, sharp);
+}
+
+// ---------- point light: L = normalize(lightPosition - P) ----------
+
+TEST(ShadingTest, LightDirectlyAbovePointGivesFullDiffuse) {
+    const Vec3 P{.x = 2.0f, .y = -1.0f, .z = 0.5f};
+    const Shading s = diffuseOnly(P + Vec3{.x = 0.0f, .y = 0.0f, .z = 4.0f});
+    expectGray(s.calculateColor(kWhite, kViewer, P), 1.0f);
+}
+
+TEST(ShadingTest, DiffuseOnPlaneFollowsGeometryOfLightPosition) {
+    // light at height h above the origin, point x away on the plane z = 0: cos = h / sqrt(h^2 + x^2)
+    constexpr float h = 3.0f;
+    const Shading s = diffuseOnly({.x = 0.0f, .y = 0.0f, .z = h});
+    for (const float x : {0.0f, 1.0f, 3.0f, -5.0f, 20.0f}) {
+        SCOPED_TRACE(x);
+        expectGray(s.calculateColor(kWhite, kViewer, {.x = x, .y = 0.0f, .z = 0.0f}), h / std::hypot(h, x));
+    }
+}
+
+TEST(ShadingTest, SameNormalIsLitDifferentlyAtDifferentPoints) {
+    // with a constant light direction the whole plane would have one color
+    const Shading s = diffuseOnly({.x = 0.0f, .y = 0.0f, .z = 2.0f});
+    const float below = s.calculateColor(kWhite, kViewer, kOrigin).r;
+    const float aside = s.calculateColor(kWhite, kViewer, {.x = 3.0f, .y = 0.0f, .z = 0.0f}).r;
+    EXPECT_GT(below, aside + 0.1f);
+}
+
+TEST(ShadingTest, MovingLightAndPointTogetherKeepsColor) {
+    Shading s;
+    s.setKd(0.6f);
+    s.setKs(0.4f);
+    s.setM(5.0f);
+    const Vec3 light{.x = 1.0f, .y = 2.0f, .z = 6.0f};
+    const Vec3 P{.x = -0.5f, .y = 0.3f, .z = 0.2f};
+    const Vec3 n = normalized(Vec3{.x = 0.2f, .y = -0.1f, .z = 1.0f});
+    s.setLightPosition(light);
+    const ShadingColor expected = s.calculateColor(kWhite, n, P);
+    for (const Vec3 d : {Vec3{.x = 3.0f, .y = 0.0f, .z = 0.0f}, Vec3{.x = -1.0f, .y = 4.0f, .z = 2.0f}}) {
+        SCOPED_TRACE(testing::PrintToString(d));
+        s.setLightPosition(light + d);
+        expectColorNear(s.calculateColor(kWhite, n, P + d), expected);
+    }
+}
+
+TEST(ShadingTest, HighlightOnPlaneIsDirectlyBelowLight) {
+    // N = V = +z: R = V exactly where L = N, i.e. under the light
+    constexpr float lightX = 1.5f;
+    const Shading s = specularOnly({.x = lightX, .y = 0.0f, .z = 4.0f}, 20.0f);
+    float bestX = 0.0f;
+    float best = -1.0f;
+    for (int k = -60; k <= 60; ++k) {
+        const float x = static_cast<float>(k) * 0.1f;
+        const float value = s.calculateColor(kWhite, kViewer, {.x = x, .y = 0.0f, .z = 0.0f}).r;
+        if (value > best) {
+            best = value;
+            bestX = x;
+        }
+    }
+    EXPECT_NEAR(bestX, lightX, 1e-4f);
+    EXPECT_NEAR(best, 1.0f, 1e-5f);
+}
+
+TEST(ShadingTest, LightAtThePointGivesBlackWithoutNaN) {
+    // L = normalize(0) = 0: no direction, no light (and no NaN from dividing by zero)
+    Shading s;
+    s.setM(3.0f);
+    const Vec3 P{.x = 1.0f, .y = 1.0f, .z = 1.0f};
+    s.setLightPosition(P);
+    const ShadingColor c = s.calculateColor(kWhite, kViewer, P);
+    ASSERT_FALSE(std::isnan(c.r));
+    expectGray(c, 0.0f);
 }
 
 // ---------- invariants ----------
@@ -127,14 +201,15 @@ TEST(ShadingTest, ResultDoesNotDependOnNormalLength) {
     s.setM(5.0f);
     s.setLightPosition(tilted(0.5f));
     const Vec3 n = normalized(Vec3{.x = -0.2f, .y = 0.1f, .z = 1.0f});
-    const ShadingColor expected = s.calculateColor(kWhite, n);
+    const ShadingColor expected = s.calculateColor(kWhite, n, kOrigin);
     for (const float scale : {0.2f, 0.9f, 3.0f}) {
         SCOPED_TRACE(scale);
-        expectColorNear(s.calculateColor(kWhite, n * scale), expected);
+        expectColorNear(s.calculateColor(kWhite, n * scale, kOrigin), expected);
     }
 }
 
-TEST(ShadingTest, ResultDoesNotDependOnLightVectorLength) {
+TEST(ShadingTest, ResultDoesNotDependOnLightDistance) {
+    // no attenuation in the model: only the direction to the light matters
     const Vec3 light{.x = 0.3f, .y = -0.2f, .z = 0.9f};
     const Vec3 n = normalized(Vec3{.x = 0.1f, .y = 0.2f, .z = 1.0f});
     Shading unit;
@@ -143,7 +218,7 @@ TEST(ShadingTest, ResultDoesNotDependOnLightVectorLength) {
     unit.setLightPosition(light);
     Shading longer = unit;
     longer.setLightPosition(light * 7.0f);
-    expectColorNear(longer.calculateColor(kWhite, n), unit.calculateColor(kWhite, n));
+    expectColorNear(longer.calculateColor(kWhite, n, kOrigin), unit.calculateColor(kWhite, n, kOrigin));
 }
 
 TEST(ShadingTest, BackSideIsLitLikeFrontSide) {
@@ -153,9 +228,9 @@ TEST(ShadingTest, BackSideIsLitLikeFrontSide) {
     s.setM(5.0f);
     s.setLightPosition(tilted(0.4f));
     const Vec3 n = normalized(Vec3{.x = 0.3f, .y = -0.1f, .z = 0.8f});
-    const ShadingColor front = s.calculateColor(kWhite, n);
+    const ShadingColor front = s.calculateColor(kWhite, n, kOrigin);
     ASSERT_GT(front.r, 0.1f);
-    expectColorNear(s.calculateColor(kWhite, -n), front);
+    expectColorNear(s.calculateColor(kWhite, -n, kOrigin), front);
 }
 
 TEST(ShadingTest, LightAndObjectColorsMultiplyPerComponent) {
@@ -164,19 +239,19 @@ TEST(ShadingTest, LightAndObjectColorsMultiplyPerComponent) {
     s.setM(5.0f);
     s.setLightPosition(tilted(0.2f));
     const Vec3 n = tilted(-0.1f);
-    const float gray = s.calculateColor(kWhite, n).r;
+    const float gray = s.calculateColor(kWhite, n, kOrigin).r;
     ASSERT_GT(gray, 0.1f);
 
     s.setIl({.r = 1.0f, .g = 0.0f, .b = 0.5f});
     const ShadingColor io{.r = 0.4f, .g = 1.0f, .b = 1.0f};
-    expectColorNear(s.calculateColor(io, n), {.r = 0.4f * gray, .g = 0.0f, .b = 0.5f * gray});
+    expectColorNear(s.calculateColor(io, n, kOrigin), {.r = 0.4f * gray, .g = 0.0f, .b = 0.5f * gray});
 }
 
 TEST(ShadingTest, ZeroCoefficientsGiveBlack) {
     Shading s;
     s.setKd(0.0f);
     s.setKs(0.0f);
-    expectGray(s.calculateColor(kWhite, kViewer), 0.0f);
+    expectGray(s.calculateColor(kWhite, kViewer, kOrigin), 0.0f);
 }
 
 TEST(ShadingTest, ColorIsNeverNegative) {
@@ -187,7 +262,8 @@ TEST(ShadingTest, ColorIsNeverNegative) {
     s.setM(3.0f);
     for (int i = 0; i < 1000; ++i) {
         s.setLightPosition({.x = coord(gen), .y = coord(gen), .z = coord(gen) + 1.5f});
-        const ShadingColor c = s.calculateColor(kWhite, {.x = coord(gen), .y = coord(gen), .z = coord(gen) + 1.5f});
+        const Vec3 n{.x = coord(gen), .y = coord(gen), .z = coord(gen) + 1.5f};
+        const ShadingColor c = s.calculateColor(kWhite, n, kOrigin);
         ASSERT_GE(c.r, 0.0f);
     }
 }

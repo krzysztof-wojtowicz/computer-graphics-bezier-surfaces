@@ -869,11 +869,31 @@ QPointF sceneToScreen(const Vec3 &q) {
 const Vec3 kNearCenter{-1.0f, 0.0f, 1.0f}, kFarCenter{1.0f, 0.0f, -1.0f};
 const Vec3 kOverlap{0.0f, 0.0f, 0.0f}, kNearOnly{-2.5f, 0.0f, 1.0f}, kFarOnly{2.5f, 0.0f, -1.0f};
 
-/// In the overlap the near square is visible: same color as where it is alone, different from the far one
+/// Which surface covers the pixel: the fill colors differ in their dominant channel (0 = red, 1 = green, 2 = blue).
+/// With a point light the brightness changes across a flat surface, the dominant channel does not; -1 for white
+/// background, black or a tie. Callers switch the highlight off (ks = 0), it could saturate all channels to white.
+int surfaceAt(const QImage &img, const QPointF &p) {
+    const QColor c = colorAt(img, p);
+    const int r = c.red(), g = c.green(), b = c.blue();
+    if (r > g && r > b) return 0;
+    if (g > r && g > b) return 1;
+    if (b > r && b > g) return 2;
+    return -1;
+}
+
+/// Fill only, diffuse only: surfaceAt() can tell the surfaces apart everywhere
+void showOnlyDiffuseFill(Viewport &viewport) {
+    showOnlyFill(viewport);
+    viewport.setKs(0.0f);
+}
+
+/// In the overlap the near square is visible: same surface as where it is alone, not the far one
 void expectNearSquareVisible(const QImage &img) {
-    const QColor overlap = colorAt(img, sceneToScreen(kOverlap));
-    const QColor nearOnly = colorAt(img, sceneToScreen(kNearOnly));
-    const QColor farOnly = colorAt(img, sceneToScreen(kFarOnly));
+    const int overlap = surfaceAt(img, sceneToScreen(kOverlap));
+    const int nearOnly = surfaceAt(img, sceneToScreen(kNearOnly));
+    const int farOnly = surfaceAt(img, sceneToScreen(kFarOnly));
+    ASSERT_NE(nearOnly, -1) << "near square not found";
+    ASSERT_NE(farOnly, -1) << "far square not found";
     ASSERT_NE(nearOnly, farOnly) << "surfaces must have different colors for this test";
     EXPECT_EQ(overlap, nearOnly);
 }
@@ -883,7 +903,7 @@ TEST(ViewportDepthTest, NearerSurfaceCoversFartherOneInAnyOrder) {
     // Without a depth test the surface drawn last would always win, so one of the orders would fail
     for (const bool nearFirst : {true, false}) {
         Viewport viewport;
-        showOnlyFill(viewport);
+        showOnlyDiffuseFill(viewport);
         const BezierSurface nearSquare = sceneRect(viewport, kNearCenter, 2.0f, 2.0f);
         const BezierSurface farSquare = sceneRect(viewport, kFarCenter, 2.0f, 2.0f);
         viewport.setSurfaces(nearFirst ? std::vector{nearSquare, farSquare} : std::vector{farSquare, nearSquare});
@@ -897,26 +917,28 @@ TEST(ViewportDepthTest, IntersectingSurfacesSwitchAlongIntersection) {
     // for x > 0 B is closer, for x < 0 A is. A alone at y = -2, B alone at y = 2.
     for (const bool aFirst : {true, false}) {
         Viewport viewport;
-        showOnlyFill(viewport);
+        showOnlyDiffuseFill(viewport);
         const BezierSurface a = sceneRect(viewport, {0.0f, -1.0f, 0.0f}, 3.0f, 2.0f);
         const BezierSurface b = sceneRect(viewport, {0.0f, 1.0f, 0.0f}, 3.0f, 2.0f, 0.5f);
         viewport.setSurfaces(aFirst ? std::vector{a, b} : std::vector{b, a});
         const QImage img = renderViewport(viewport, kMeshImageSize);
         SCOPED_TRACE(aFirst ? "A first" : "B first");
-        const QColor aOnly = colorAt(img, sceneToScreen({0.0f, -2.0f, 0.0f}));
-        const QColor bOnly = colorAt(img, sceneToScreen({0.0f, 2.0f, 0.0f}));
+        const int aOnly = surfaceAt(img, sceneToScreen({0.0f, -2.0f, 0.0f}));
+        const int bOnly = surfaceAt(img, sceneToScreen({0.0f, 2.0f, 0.0f}));
+        ASSERT_NE(aOnly, -1);
+        ASSERT_NE(bOnly, -1);
         ASSERT_NE(aOnly, bOnly);
-        EXPECT_EQ(colorAt(img, sceneToScreen({2.0f, 0.0f, 0.0f})), bOnly) << "right of the intersection";
-        EXPECT_EQ(colorAt(img, sceneToScreen({-2.0f, 0.0f, 0.0f})), aOnly) << "left of the intersection";
-        EXPECT_EQ(colorAt(img, sceneToScreen({0.5f, 0.0f, 0.0f})), bOnly) << "just right of the intersection";
-        EXPECT_EQ(colorAt(img, sceneToScreen({-0.5f, 0.0f, 0.0f})), aOnly) << "just left of the intersection";
+        EXPECT_EQ(surfaceAt(img, sceneToScreen({2.0f, 0.0f, 0.0f})), bOnly) << "right of the intersection";
+        EXPECT_EQ(surfaceAt(img, sceneToScreen({-2.0f, 0.0f, 0.0f})), aOnly) << "left of the intersection";
+        EXPECT_EQ(surfaceAt(img, sceneToScreen({0.5f, 0.0f, 0.0f})), bOnly) << "just right of the intersection";
+        EXPECT_EQ(surfaceAt(img, sceneToScreen({-0.5f, 0.0f, 0.0f})), aOnly) << "just left of the intersection";
     }
 }
 
 TEST(ViewportDepthTest, HalfTurnShowsTheOtherSurface) {
     // 314 px = 3.14 rad around the screen Y axis: (x, y, z) -> (-x, y, -z), the far square comes to the front
     Viewport viewport;
-    showOnlyFill(viewport);
+    showOnlyDiffuseFill(viewport);
     const Mat3 back = viewport.rotation().transposed();
     viewport.setSurfaces({sceneRect(viewport, kNearCenter, 2.0f, 2.0f), sceneRect(viewport, kFarCenter, 2.0f, 2.0f)});
     const QImage before = renderViewport(viewport, kMeshImageSize);
@@ -926,9 +948,10 @@ TEST(ViewportDepthTest, HalfTurnShowsTheOtherSurface) {
     const Vec3 overlap = back * kOverlap, nearOnly = back * kNearOnly, farOnly = back * kFarOnly;
     drag(viewport, {100, 300}, {414, 300});
     const QImage after = grabImage(viewport);
-    const QColor wasFar = colorAt(after, screenPoint(viewport, farOnly));
-    ASSERT_NE(wasFar, colorAt(after, screenPoint(viewport, nearOnly)));
-    EXPECT_EQ(colorAt(after, screenPoint(viewport, overlap)), wasFar);
+    const int wasFar = surfaceAt(after, screenPoint(viewport, farOnly));
+    ASSERT_NE(wasFar, -1);
+    ASSERT_NE(wasFar, surfaceAt(after, screenPoint(viewport, nearOnly)));
+    EXPECT_EQ(surfaceAt(after, screenPoint(viewport, overlap)), wasFar);
 }
 
 TEST(ViewportDepthTest, DepthIsResetEveryFrame) {
@@ -964,7 +987,7 @@ TEST(ViewportDepthTest, RedrawWithoutChangesGivesSameImage) {
 
 TEST(ViewportDepthTest, DepthTestWorksAfterResize) {
     Viewport viewport;
-    showOnlyFill(viewport);
+    showOnlyDiffuseFill(viewport);
     viewport.setSurfaces({sceneRect(viewport, kNearCenter, 2.0f, 2.0f), sceneRect(viewport, kFarCenter, 2.0f, 2.0f)});
     renderViewport(viewport, {200, 150}); // smaller first: a buffer not resized with the image would be too small
     expectNearSquareVisible(renderViewport(viewport, kMeshImageSize));
@@ -979,6 +1002,27 @@ TEST(ViewportControlsTest, DefaultsShowEverythingAtDefaultResolution) {
     EXPECT_TRUE(viewport.showPolygon());
     EXPECT_TRUE(viewport.showPoints());
     EXPECT_EQ(viewport.resolution(), Mesh::kDefaultResolution);
+}
+
+TEST(ViewportControlsTest, LightPathIsHiddenByDefaultAndToggles) {
+    // hidden in a bare Viewport (MainWindow switches it on), so the other tests see the scene alone
+    Viewport viewport;
+    EXPECT_FALSE(viewport.showLightPath());
+    viewport.setShowFill(false);
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(false);
+    viewport.setLightColor(QColor(255, 0, 0)); // the light dot is filled with the light color, white by default
+    viewport.setSurfaces({flatSquare()});
+    const QPointF light = sceneToScreen(viewport.lightPosition());
+    EXPECT_TRUE(drawnPixels(showViewport(viewport, kMeshImageSize)).empty());
+
+    viewport.setShowLightPath(true);
+    EXPECT_TRUE(viewport.showLightPath());
+    EXPECT_TRUE(dotAt(grabImage(viewport), light)) << "light not drawn";
+
+    viewport.setShowLightPath(false);
+    EXPECT_TRUE(drawnPixels(grabImage(viewport)).empty());
 }
 
 TEST(ViewportControlsTest, SettersUpdateFlags) {
@@ -1134,11 +1178,14 @@ TEST(ViewportResolutionTest, VerticesAreDrawnAtNewResolution) {
 
 TEST(ViewportLightingTest, SettersStoreValuesAndRedraw) {
     // each setter must re-render, otherwise the image keeps the old shading until the next drag
-    const Vec3 center{0.0f, 0.0f, 0.0f};
+    // point light: a plane flat on the screen (N = V) seen halfway between the screen centre and the point below
+    // the light; directly below it cos(V, R) = 1 for every m, far away ~0 for every m, so setM would not show
     Viewport viewport;
     showOnlyFill(viewport);
-    viewport.setSurfaces({flatSquareAround(center, 1.0f)});
-    const QPointF p = screenPoint(viewport, center);
+    const Vec3 light = viewport.lightPosition();
+    const Vec3 center{0.5f * light.x, 0.5f * light.y, 0.0f};
+    viewport.setSurfaces({sceneRect(viewport, center, 1.0f, 1.0f)});
+    const QPointF p = sceneToScreen(center);
     const QColor initial = colorAt(showViewport(viewport, kMeshImageSize), p);
 
     viewport.setKd(0.2f);
@@ -1155,6 +1202,24 @@ TEST(ViewportLightingTest, SettersStoreValuesAndRedraw) {
     viewport.setKs(0.0f);
     EXPECT_FLOAT_EQ(viewport.ks(), 0.0f);
     EXPECT_NE(colorAt(grabImage(viewport), p), wide) << "setKs";
+}
+
+TEST(ViewportLightingTest, PointLightUsesRotatedPositions) {
+    // diffuse on a plane flat on the screen: brightness ~ cos(N, L) = h / |light - P| with P after rotation.
+    // The ratio of two samples doesn't depend on the (private) fill color.
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const Vec3 light = viewport.lightPosition();
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.0f, 4.0f)});
+    const QImage img = showViewport(viewport, kMeshImageSize);
+
+    const Vec3 towards{0.5f * light.x, 0.5f * light.y, 0.0f};
+    const Vec3 away{-0.5f * light.x, -0.5f * light.y, 0.0f};
+    const auto cosAt = [&](const Vec3 &p) { return light.z / length(light - p); };
+    const int near = colorAt(img, sceneToScreen(towards)).red();
+    const int far = colorAt(img, sceneToScreen(away)).red();
+    ASSERT_GT(far, 50);
+    EXPECT_NEAR(static_cast<float>(near) / static_cast<float>(far), cosAt(towards) / cosAt(away), 0.02f);
 }
 
 TEST(ViewportLightingTest, ZeroCoefficientsGiveBlackFill) {
