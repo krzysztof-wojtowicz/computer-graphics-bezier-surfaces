@@ -143,6 +143,20 @@ void Viewport::setLightZ(const float z) {
     update();
 }
 
+QColor Viewport::surfaceColor(const int i) const {
+    assert(i >= 0 && i < kColorCount && "surface color index out of range!");
+    return m_surfaceColors[i];
+}
+
+void Viewport::setSurfaceColor(const int i, const QColor &color) {
+    assert(i >= 0 && i < kColorCount && "surface color index out of range!");
+    assert(color.isValid() && "invalid surface color!");
+    m_surfaceColors[i] = color;
+
+    render();
+    update();
+}
+
 void Viewport::resetLightPath() {
     m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, lightZ());
     m_draggedPoint = -1; // a reset during a drag must not keep moving a point of the old curve
@@ -345,9 +359,9 @@ std::array<std::array<Vec3, 4>, 4> Viewport::surfaceControlPoints(const Mesh &me
     return controlPoints;
 }
 
-void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) {
+void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
     painter.setPen(Qt::NoPen);
-    painter.setBrush(kMeshColors[colorIdx]);
+    painter.setBrush(meshColor(colorIdx));
 
     for (const auto &vertices = mesh.vertices(); const auto &v: vertices) {
         const auto sp = proj.project(v.after.P);
@@ -358,8 +372,8 @@ void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &
     }
 }
 
-void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) {
-    painter.setPen(QPen(kMeshColors[colorIdx], 1, Qt::SolidLine));
+void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
+    painter.setPen(QPen(meshColor(colorIdx), 1, Qt::SolidLine));
     const auto &vertices = mesh.vertices();
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         // a, b, c vertices of a triangle
@@ -385,7 +399,7 @@ void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter 
 void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter,
                                  const int colorIdx) const {
     painter.setPen(Qt::NoPen);
-    painter.setBrush(kPolygonColors[colorIdx]);
+    painter.setBrush(polygonColor(colorIdx));
 
     // calculate control points projections
     std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
@@ -403,7 +417,7 @@ void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPain
 }
 
 void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
-    painter.setPen(QPen(kPolygonColors[colorIdx], 1, Qt::DashLine));
+    painter.setPen(QPen(polygonColor(colorIdx), 1, Qt::DashLine));
 
     // calculate control points projections
     std::array<std::array<ScreenPoint, 4>, 4> controlPointsProj = {};
@@ -438,7 +452,7 @@ void Viewport::drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &p
 }
 
 void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, const int colorIdx) {
-    const QRgb color = kFillColors[colorIdx].rgb();
+    const QRgb color = surfaceColor(colorIdx).rgb();
     const ShadingColor sColor = {
         .r = Shading::int2float(qRed(color)),
         .g = Shading::int2float(qGreen(color)),

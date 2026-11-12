@@ -30,6 +30,17 @@ public:
     static constexpr float kDefaultLightZ = 8.0f;
     static constexpr float kLightSpeed = 0.5f; // curve segments per second (4 segments = 8 s per lap)
     static constexpr float kPickRadius = 8; // px: a press this close to a light path point drags it, else rotates
+    /// Surfaces take colors in turn (surface k gets color k % kColorCount); each color is chosen in the panel
+    static constexpr int kColorCount = 3;
+    static constexpr std::array<QColor, kColorCount> kDefaultSurfaceColors = {
+        QColor(255, 133, 133),
+        QColor(133, 255, 133),
+        QColor(133, 133, 255)
+    };
+    /// Lines are drawn in darker shades of the fill color (same hue): visible on the white background
+    /// whatever color is chosen, and the surface's fill, polygon and mesh still look like one object
+    static constexpr int kPolygonDarkness = 150; // QColor::darker factor: value / 1.5
+    static constexpr int kMeshDarkness = 250; // value / 2.5
 
     explicit Viewport(QWidget *parent = nullptr);
 
@@ -46,6 +57,10 @@ public:
     [[nodiscard]] float ks() const { return m_shader.ks(); }
     [[nodiscard]] float m() const { return m_shader.m(); }
     [[nodiscard]] QColor lightColor() const;
+    /// Fill color i, the polygon and mesh shades are derived from it
+    [[nodiscard]] QColor surfaceColor(int i) const;
+    [[nodiscard]] QColor polygonColor(int i) const { return surfaceColor(i).darker(kPolygonDarkness); }
+    [[nodiscard]] QColor meshColor(int i) const { return surfaceColor(i).darker(kMeshDarkness); }
     /// From the path, not from the shader: valid also before the first render()
     [[nodiscard]] Vec3 lightPosition() const { return m_lightPath.evaluate(m_lightT); }
     [[nodiscard]] float lightT() const { return m_lightT; }
@@ -64,6 +79,7 @@ public:
     void setKs(float ks);
     void setM(float m);
     void setLightColor(const QColor &color);
+    void setSurfaceColor(int i, const QColor &color);
     void setLightZ(float z);
     /// Restores the default shape of the light path; keeps its height (set by the z slider) and the light's t
     void resetLightPath();
@@ -91,22 +107,6 @@ private:
     static constexpr QColor kLightPathPolygonColor = QColor(150, 150, 150);
     static constexpr int kAnimationIntervalMs = 16; // ~60 fps, real rate depends on render time
     static constexpr float kMaxAnimationStep = 0.1f; // seconds; avoids a jump after the window was blocked
-    static constexpr int kColorCount = 3;
-    static constexpr QColor kMeshColors[kColorCount] = {
-        QColor(100, 0, 0),
-        QColor(0, 100, 0),
-        QColor(0, 0, 100)
-    };
-    static constexpr QColor kPolygonColors[kColorCount] = {
-        QColor(200, 0, 0),
-        QColor(0, 200, 0),
-        QColor(0, 0, 200)
-    };
-    static constexpr QColor kFillColors[kColorCount] = {
-        QColor(255, 133, 133),
-        QColor(133, 255, 133),
-        QColor(133, 133, 255)
-    };
 
     // --- STATES ---
     QImage m_frame;
@@ -117,6 +117,7 @@ private:
     Vec3 m_dragOffset; // point - mouse in scene units, so the point doesn't jump to the cursor when grabbed
     ZBuffer m_zbuffer; // sized in resizeEvent, like m_frame
     Shading m_shader; // shader for fill color calculation with light model
+    std::array<QColor, kColorCount> m_surfaceColors = kDefaultSurfaceColors; // fill colors, used in turn
     BezierCurve m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, kDefaultLightZ); // light path for animation
 
     float m_lightT = 0.0f; // light position parameter on m_lightPath, kept in [0, segments)
@@ -137,8 +138,8 @@ private:
     [[nodiscard]] std::array<std::array<Vec3, 4>, 4> surfaceControlPoints(const Mesh &mesh) const;
 
     // --- DRAWING HELPERS ---
-    static void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx);
-    static void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx);
+    void drawVertices(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
+    void drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
     void drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
     void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
     void fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, int colorIdx);

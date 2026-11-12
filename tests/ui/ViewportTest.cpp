@@ -32,6 +32,7 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1634,6 +1635,126 @@ TEST(ViewportAnimationTest, RunningTimerMovesLight) {
     EXPECT_FLOAT_EQ(viewport.lightT(), stopped) << "light moves after stop";
 }
 
+// ---------- 7: surface colors ----------
+
+namespace {
+/// Three squares in a row (scene coordinates), surface k centred at x = -3, 0, 3 (+ a fourth one below if asked)
+std::vector<BezierSurface> squaresInRow(const Viewport &viewport, const bool fourth = false) {
+    std::vector<BezierSurface> res;
+    for (int k = 0; k < 3; ++k)
+        res.push_back(sceneRect(viewport, {-3.0f + 3.0f * static_cast<float>(k), 1.5f, 0.0f}, 1.0f, 1.0f));
+    if (fourth)
+        res.push_back(sceneRect(viewport, {0.0f, -2.5f, 0.0f}, 1.0f, 1.0f));
+    return res;
+}
+
+const std::array<Vec3, 4> kSquareCenters = {{{-3.0f, 1.5f, 0.0f}, {0.0f, 1.5f, 0.0f}, {3.0f, 1.5f, 0.0f}, {0.0f, -2.5f, 0.0f}}};
+
+/// Smallest value of the channel over the drawn pixels farther than `gap` from every point in `skip`:
+/// the line core, where antialiasing doesn't mix in white (the control point dots are skipped)
+int darkestChannel(const QImage &img, int (QColor::*channel)() const, const std::vector<QPointF> &skip = {},
+                   const double gap = 0.0) {
+    int res = 255;
+    for (const QPoint &p : drawnPixels(img)) {
+        const bool nearSkipped = std::any_of(skip.begin(), skip.end(), [&](const QPointF &q) {
+            return std::hypot(p.x() - q.x(), p.y() - q.y()) <= gap;
+        });
+        if (!nearSkipped)
+            res = std::min(res, (img.pixelColor(p).*channel)());
+    }
+    return res;
+}
+} // namespace
+
+TEST(ViewportColorTest, DefaultColorsAndDerivedShades) {
+    const Viewport viewport;
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        const QColor fill = viewport.surfaceColor(i);
+        EXPECT_EQ(fill, Viewport::kDefaultSurfaceColors[i]);
+        // same hue, darker: polygon darker than fill, mesh darker than polygon
+        EXPECT_EQ(viewport.polygonColor(i).hsvHue(), fill.hsvHue());
+        EXPECT_EQ(viewport.meshColor(i).hsvHue(), fill.hsvHue());
+        EXPECT_LT(viewport.polygonColor(i).value(), fill.value());
+        EXPECT_LT(viewport.meshColor(i).value(), viewport.polygonColor(i).value());
+    }
+}
+
+TEST(ViewportColorTest, ShadesFollowChosenColor) {
+    Viewport viewport;
+    viewport.setSurfaceColor(1, QColor(0, 0, 200));
+    EXPECT_EQ(viewport.surfaceColor(1), QColor(0, 0, 200));
+    EXPECT_EQ(viewport.polygonColor(1), QColor(0, 0, 200).darker(Viewport::kPolygonDarkness));
+    EXPECT_EQ(viewport.meshColor(1), QColor(0, 0, 200).darker(Viewport::kMeshDarkness));
+    // white stays visible on the white background: its shades are grays
+    viewport.setSurfaceColor(2, Qt::white);
+    EXPECT_LT(viewport.polygonColor(2).value(), 255);
+    EXPECT_LT(viewport.meshColor(2).value(), viewport.polygonColor(2).value());
+}
+
+TEST(ViewportColorTest, SettingColorChangesFillOfOnlyThatSurface) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces(squaresInRow(viewport));
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    viewport.setSurfaceColor(1, QColor(255, 255, 0));
+    const QImage after = grabImage(viewport);
+    for (int k = 0; k < 3; ++k) {
+        SCOPED_TRACE(k);
+        const QPointF p = sceneToScreen(kSquareCenters[k]);
+        if (k == 1)
+            EXPECT_NE(colorAt(after, p), colorAt(before, p));
+        else
+            EXPECT_EQ(colorAt(after, p), colorAt(before, p));
+    }
+    // yellow light-colored fill: red and green equal, no blue
+    const QColor c = colorAt(after, sceneToScreen(kSquareCenters[1]));
+    EXPECT_EQ(c.red(), c.green());
+    EXPECT_EQ(c.blue(), 0);
+}
+
+TEST(ViewportColorTest, FourthSurfaceWrapsToFirstColor) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces(squaresInRow(viewport, true));
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    EXPECT_EQ(surfaceAt(before, sceneToScreen(kSquareCenters[3])), surfaceAt(before, sceneToScreen(kSquareCenters[0])));
+    viewport.setSurfaceColor(0, QColor(0, 0, 0));
+    const QImage after = grabImage(viewport);
+    for (const int k : {0, 3})
+        EXPECT_EQ(colorAt(after, sceneToScreen(kSquareCenters[k])), QColor(0, 0, 0)) << "surface " << k;
+    for (const int k : {1, 2})
+        EXPECT_EQ(colorAt(after, sceneToScreen(kSquareCenters[k])), colorAt(before, sceneToScreen(kSquareCenters[k])));
+}
+
+TEST(ViewportColorTest, PolygonAndMeshUseDerivedShades) {
+    // one surface: color 0. Pure blue, so every drawn pixel (antialiased with white) stays blue-dominant
+    const QColor blue(0, 0, 255);
+    for (const bool polygon : {true, false}) {
+        SCOPED_TRACE(polygon ? "polygon" : "mesh");
+        Viewport viewport;
+        polygon ? showOnlyPolygon(viewport) : showOnlyMesh(viewport);
+        viewport.setSurfaces({flatSquare()});
+        viewport.setSurfaceColor(0, blue);
+        const QImage img = showViewport(viewport, kMeshImageSize);
+        ASSERT_FALSE(drawnPixels(img).empty());
+        for (const QPoint &p : drawnPixels(img)) {
+            const QColor c = img.pixelColor(p);
+            if (c.red() > 240) continue; // faint antialiased edge, almost white: no hue to check
+            ASSERT_GT(c.blue(), c.red()) << p.x() << ", " << p.y();
+            ASSERT_NEAR(c.red(), c.green(), 1) << p.x() << ", " << p.y();
+        }
+        // polygon: the dots are drawn in the polygon shade too, so check the lines alone
+        std::vector<QPointF> dots;
+        if (polygon)
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j)
+                    dots.push_back(screenPoint(viewport, controlPointOfFlatSquare(i, j)));
+        const QColor expected = polygon ? viewport.polygonColor(0) : viewport.meshColor(0);
+        EXPECT_NEAR(darkestChannel(img, &QColor::blue, dots, 5.0), expected.blue(), 8);
+    }
+}
+
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
     GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork
@@ -1645,6 +1766,14 @@ TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
 TEST(ViewportDeathTest, RejectsInvalidLightColor) {
     Viewport viewport;
     EXPECT_DEATH(viewport.setLightColor(QColor()), "invalid light color");
+}
+
+TEST(ViewportDeathTest, RejectsSurfaceColorIndexOutOfRangeAndInvalidColor) {
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setSurfaceColor(-1, Qt::red), "surface color index out of range");
+    EXPECT_DEATH(viewport.setSurfaceColor(Viewport::kColorCount, Qt::red), "surface color index out of range");
+    EXPECT_DEATH(std::ignore = viewport.surfaceColor(Viewport::kColorCount), "surface color index out of range");
+    EXPECT_DEATH(viewport.setSurfaceColor(0, QColor()), "invalid surface color");
 }
 
 TEST(ViewportDeathTest, RejectsLightZOutOfRange) {

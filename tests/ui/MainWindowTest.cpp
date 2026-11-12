@@ -24,6 +24,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <tuple>
 
@@ -237,13 +238,14 @@ TEST(MainWindowLightingTest, EverySliderChangesOnlyItsOwnParameterAndLabel) {
 namespace {
 /// Answers the modal QColorDialog opened by `open()` once the dialog's event loop is running
 template <class OpenFn>
-void answerColorDialog(OpenFn &&open, const QColor &expectedStart, const QColor &color, const bool accept) {
+void answerColorDialog(OpenFn &&open, const QColor &expectedStart, const QColor &color, const bool accept,
+                       const QString &title = "Light color") {
     bool answered = false;
     QTimer::singleShot(0, [&] {
         auto *dialog = qobject_cast<QColorDialog *>(QApplication::activeModalWidget());
         ASSERT_NE(dialog, nullptr);
-        EXPECT_EQ(dialog->windowTitle(), "Light color");
-        EXPECT_EQ(dialog->currentColor(), expectedStart) << "dialog should start from the current light";
+        EXPECT_EQ(dialog->windowTitle(), title);
+        EXPECT_EQ(dialog->currentColor(), expectedStart) << "dialog should start from the current color";
         dialog->setCurrentColor(color);
         accept ? dialog->accept() : dialog->reject();
         answered = true;
@@ -282,7 +284,7 @@ TEST(MainWindowLightingTest, CancellingDialogKeepsLightColor) {
 }
 
 namespace {
-/// Color of the swatch icon on the light color button
+/// Color of the swatch icon on a color button
 QColor swatchColor(const QPushButton &button) {
     return button.icon().pixmap(16, 16).toImage().pixelColor(8, 8);
 }
@@ -419,4 +421,62 @@ TEST(MainWindowLightPathTest, MenuActionResetsDraggedPath) {
         const Vec3 d = viewport->lightPath().point(i) - circle.point(i);
         EXPECT_LT(length(d), 1e-5f) << "point " << i;
     }
+}
+
+// ---------- surface colors (stage 7) ----------
+
+namespace {
+QPushButton *findSurfaceColorButton(const MainWindow &window, const int i) {
+    return window.findChild<QPushButton *>(QString("surfaceColorButton%1").arg(i + 1));
+}
+} // namespace
+
+TEST(MainWindowColorTest, OneButtonPerColorShowingIt) {
+    const MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        QPushButton *button = findSurfaceColorButton(window, i);
+        ASSERT_NE(button, nullptr);
+        EXPECT_EQ(button->text(), QString("Color %1...").arg(i + 1));
+        EXPECT_EQ(swatchColor(*button), viewport->surfaceColor(i));
+    }
+    EXPECT_EQ(findSurfaceColorButton(window, Viewport::kColorCount), nullptr) << "exactly kColorCount buttons";
+}
+
+TEST(MainWindowColorTest, ButtonSetsOnlyItsOwnColor) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        QPushButton *button = findSurfaceColorButton(window, i);
+        ASSERT_NE(button, nullptr);
+        std::array<QColor, Viewport::kColorCount> before{};
+        for (int j = 0; j < Viewport::kColorCount; ++j)
+            before[j] = viewport->surfaceColor(j);
+
+        const QColor chosen(30 + 70 * i, 200 - 50 * i, 90);
+        answerColorDialog([button] { button->click(); }, before[i], chosen, true,
+                          QString("Surface color %1").arg(i + 1));
+        EXPECT_EQ(viewport->surfaceColor(i), chosen);
+        EXPECT_EQ(swatchColor(*button), chosen);
+        for (int j = 0; j < Viewport::kColorCount; ++j)
+            if (j != i)
+                EXPECT_EQ(viewport->surfaceColor(j), before[j]) << "color " << j << " changed too";
+    }
+}
+
+TEST(MainWindowColorTest, CancelKeepsColorAndDialogStartsFromLastChoice) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    QPushButton *button = findSurfaceColorButton(window, 1);
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(button, nullptr);
+    answerColorDialog([button] { button->click(); }, viewport->surfaceColor(1), QColor(1, 2, 3), true,
+                      "Surface color 2");
+    answerColorDialog([button] { button->click(); }, QColor(1, 2, 3), QColor(200, 0, 0), false, "Surface color 2");
+    EXPECT_EQ(viewport->surfaceColor(1), QColor(1, 2, 3));
+    EXPECT_EQ(swatchColor(*button), QColor(1, 2, 3));
 }

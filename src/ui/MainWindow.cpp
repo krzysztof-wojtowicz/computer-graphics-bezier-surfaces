@@ -69,6 +69,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_viewport->setShowLightPath(true); // hidden in a bare Viewport, shown in the program from the start
     addToggle("Light path", m_viewport->showLightPath(), &Viewport::setShowLightPath);
 
+    // one button per surface color (surfaces take them in turn), each shows its color as an icon
+    auto *colorGroup = new QGroupBox("Surface colors", panel);
+    auto *colorLayout = new QVBoxLayout(colorGroup);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        auto *button = new QPushButton(QString("Color %1...").arg(i + 1), colorGroup);
+        button->setObjectName(QString("surfaceColorButton%1").arg(i + 1));
+        colorLayout->addWidget(button);
+        connect(button, &QPushButton::clicked, this, [this, i] { chooseSurfaceColor(i); });
+        m_surfaceColorButtons[i] = button;
+        updateSurfaceColorButton(i);
+    }
+
     // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, light z as tenths, m in [1, 100] as is
     auto *lightGroup = new QGroupBox("Lighting", panel);
     auto *lightLayout = new QVBoxLayout(lightGroup);
@@ -120,6 +132,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
+    panelLayout->addWidget(colorGroup);
     panelLayout->addWidget(lightGroup);
     panelLayout->addStretch();
     layout->addWidget(panel);
@@ -174,4 +187,19 @@ void MainWindow::updateLightColorButton() {
     QPixmap swatch(16, 16);
     swatch.fill(m_viewport->lightColor());
     m_lightColorButton->setIcon(QIcon(swatch));
+}
+
+void MainWindow::chooseSurfaceColor(const int i) {
+    const QColor color = QColorDialog::getColor(m_viewport->surfaceColor(i), this,
+                                                QString("Surface color %1").arg(i + 1));
+    if (!color.isValid()) return; // dialog cancelled
+
+    m_viewport->setSurfaceColor(i, color);
+    updateSurfaceColorButton(i);
+}
+
+void MainWindow::updateSurfaceColorButton(const int i) {
+    QPixmap swatch(16, 16);
+    swatch.fill(m_viewport->surfaceColor(i));
+    m_surfaceColorButtons[i]->setIcon(QIcon(swatch));
 }
