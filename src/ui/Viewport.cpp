@@ -87,6 +87,13 @@ void Viewport::setShowFill(const bool show) {
     update();
 }
 
+void Viewport::setShowLightPath(const bool show) {
+    m_showLightPath = show;
+
+    render();
+    update();
+}
+
 void Viewport::setKd(const float kd) {
     m_shader.setKd(kd);
 
@@ -120,6 +127,15 @@ void Viewport::setLightColor(const QColor &color) {
         .g = Shading::int2float(color.green()),
         .b = Shading::int2float(color.blue())
     });
+
+    render();
+    update();
+}
+
+/// Works also when the animation is stopped: render() takes the light position from the path
+void Viewport::setLightZ(const float z) {
+    assert(z >= kMinLightZ && z <= kMaxLightZ && "light z out of range!");
+    m_lightPath.setZ(z);
 
     render();
     update();
@@ -249,7 +265,7 @@ void Viewport::render() {
         }
 
         // draw light path and current light position
-        {
+        if (m_showLightPath) {
             drawLightPath(proj, painter);
         }
     } // destructor destroys painter and ends drawing on m_frame

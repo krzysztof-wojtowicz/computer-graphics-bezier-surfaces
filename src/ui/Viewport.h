@@ -22,6 +22,10 @@
 
 class Viewport : public QWidget {
 public:
+    /// Range of the light path height (scene units); the scene fits in |P| <= Projection::kSceneRadius
+    static constexpr float kMinLightZ = 0.0f;
+    static constexpr float kMaxLightZ = 20.0f;
+
     explicit Viewport(QWidget *parent = nullptr);
 
     // --- GETTERS ---
@@ -32,6 +36,7 @@ public:
     [[nodiscard]] bool showPolygon() const { return m_showPolygon; }
     [[nodiscard]] bool showPoints() const { return m_showPoints; }
     [[nodiscard]] bool showFill() const { return m_showFill; }
+    [[nodiscard]] bool showLightPath() const { return m_showLightPath; }
     [[nodiscard]] float kd() const { return m_shader.kd(); }
     [[nodiscard]] float ks() const { return m_shader.ks(); }
     [[nodiscard]] float m() const { return m_shader.m(); }
@@ -39,6 +44,7 @@ public:
     [[nodiscard]] Vec3 lightPosition() const { return m_shader.lightPosition(); }
     [[nodiscard]] float lightT() const { return m_lightT; }
     [[nodiscard]] bool isAnimating() const { return m_animationTimer.isActive(); }
+    [[nodiscard]] float lightZ() const { return m_lightPath.z(); }
 
     // --- SETTERS ---
     void setResolution(int n);
@@ -46,10 +52,12 @@ public:
     void setShowPolygon(bool show);
     void setShowPoints(bool show);
     void setShowFill(bool show);
+    void setShowLightPath(bool show);
     void setKd(float kd);
     void setKs(float ks);
     void setM(float m);
     void setLightColor(const QColor &color);
+    void setLightZ(float z);
 
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
 
@@ -106,6 +114,7 @@ private:
     bool m_showPolygon = true;
     bool m_showPoints = true;
     bool m_showFill = true;
+    bool m_showLightPath = false; // off by default: tests check the image of the scene alone
 
     // --- RENDERING ---
     void render();

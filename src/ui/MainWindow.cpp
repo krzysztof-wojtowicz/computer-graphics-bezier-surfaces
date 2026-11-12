@@ -31,7 +31,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // Create new Viewport widget and add it to the layout
     m_viewport = new Viewport(central);
     layout->addWidget(m_viewport, 1);
-    m_viewport->setAnimating(true); // temporary: until the start/stop button exists
+    m_viewport->setAnimating(true); // the light moves from the start, the button in the panel stops it
 
     // Create side panel with fixed width and vertical layout
     auto *panel = new QWidget(central);
@@ -66,13 +66,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addToggle("Triangle mesh",  m_viewport->showMesh(),    &Viewport::setShowMesh);
     addToggle("Mesh points",    m_viewport->showPoints(),  &Viewport::setShowPoints);
     addToggle("Triangle fill", m_viewport->showFill(), &Viewport::setShowFill);
+    m_viewport->setShowLightPath(true); // hidden in a bare Viewport, shown in the program from the start
+    addToggle("Light path", m_viewport->showLightPath(), &Viewport::setShowLightPath);
 
-    // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, m in [1, 100] as is
+    // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, light z as tenths, m in [1, 100] as is
     auto *lightGroup = new QGroupBox("Lighting", panel);
     auto *lightLayout = new QVBoxLayout(lightGroup);
     auto addSlider = [&](const QString &name, const int min, const int max, const float initial,
                          const float scale, void (Viewport::*setter)(float)) {
-        const int decimals = scale == 1.0f ? 0 : 2;
+        const int decimals = scale >= 1.0f ? 0 : scale >= 0.1f ? 1 : 2;
         auto *label = new QLabel(QString("%1 = %2").arg(name).arg(initial, 0, 'f', decimals), lightGroup);
         auto *slider = new QSlider(Qt::Horizontal, lightGroup);
         slider->setObjectName(name + "Slider");
@@ -91,6 +93,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addSlider("kd", 0, 100, m_viewport->kd(), 0.01f, &Viewport::setKd);
     addSlider("ks", 0, 100, m_viewport->ks(), 0.01f, &Viewport::setKs);
     addSlider("m", 1, 100, m_viewport->m(), 1.0f, &Viewport::setM);
+    constexpr float kLightZStep = 0.1f;
+    addSlider("z", static_cast<int>(std::lround(Viewport::kMinLightZ / kLightZStep)),
+              static_cast<int>(std::lround(Viewport::kMaxLightZ / kLightZStep)),
+              m_viewport->lightZ(), kLightZStep, &Viewport::setLightZ);
 
     // the button shows the current light color as an icon; the same dialog is also in the menu
     m_lightColorButton = new QPushButton("Light color...", lightGroup);
@@ -98,6 +104,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     lightLayout->addWidget(m_lightColorButton);
     connect(m_lightColorButton, &QPushButton::clicked, this, &MainWindow::chooseLightColor);
     updateLightColorButton();
+
+    // checked = animation running; the text says what a click will do
+    auto *animationButton = new QPushButton(lightGroup);
+    animationButton->setObjectName("animationButton");
+    animationButton->setCheckable(true);
+    const auto updateAnimationText = [animationButton](const bool running) {
+        animationButton->setText(running ? "Stop animation" : "Start animation");
+    };
+    animationButton->setChecked(m_viewport->isAnimating());
+    updateAnimationText(m_viewport->isAnimating());
+    lightLayout->addWidget(animationButton);
+    connect(animationButton, &QPushButton::toggled, m_viewport, &Viewport::setAnimating);
+    connect(animationButton, &QPushButton::toggled, animationButton, updateAnimationText);
 
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
