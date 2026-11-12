@@ -119,6 +119,36 @@ TEST(ProjectionTest, ScreenDistanceIsScaledDistanceInXYPlane) {
     EXPECT_NEAR(screenDist, 60.0f * sceneDistXY, kPixelEps);
 }
 
+// ---------- unproject ----------
+
+TEST(ProjectionTest, UnprojectInvertsProjectForGivenDepth) {
+    for (const auto &[w, h] : {std::pair{800, 600}, std::pair{301, 557}}) {
+        const Projection proj(w, h);
+        for (const Vec3 p : {Vec3{0.0f, 0.0f, 0.0f}, Vec3{1.5f, -2.0f, 8.0f}, Vec3{-5.2f, 5.2f, -3.0f}}) {
+            const ScreenPoint sp = proj.project(p);
+            EXPECT_VEC3_NEAR(proj.unproject(sp.x, sp.y, p.z), p, 1e-4f) << w << "x" << h;
+        }
+    }
+}
+
+TEST(ProjectionTest, ProjectInvertsUnproject) {
+    const Projection proj(640, 480);
+    for (const auto &[sx, sy] : {std::pair{0.0f, 0.0f}, std::pair{320.0f, 240.0f}, std::pair{17.5f, 433.25f}}) {
+        const ScreenPoint sp = proj.project(proj.unproject(sx, sy, 2.0f));
+        EXPECT_NEAR(sp.x, sx, kPixelEps);
+        EXPECT_NEAR(sp.y, sy, kPixelEps);
+        EXPECT_FLOAT_EQ(sp.z, 2.0f);
+    }
+}
+
+TEST(ProjectionTest, UnprojectImageCenterGivesAxis) {
+    const Projection proj(800, 600);
+    EXPECT_VEC3_EQ(proj.unproject(400.0f, 300.0f, 3.0f), (Vec3{0.0f, 0.0f, 3.0f}));
+    // y down on the screen is -y in the scene
+    EXPECT_GT(proj.unproject(400.0f, 100.0f, 0.0f).y, 0.0f);
+    EXPECT_GT(proj.unproject(700.0f, 300.0f, 0.0f).x, 0.0f);
+}
+
 TEST(ProjectionTest, FlipsTriangleOrientation) {
     // Counter-clockwise in the scene (looking from +z) becomes clockwise on the y-down screen.
     // Stage 5 relies on this when deciding which side of a triangle faces the viewer.

@@ -32,6 +32,15 @@ public:
         };
     }
 
+    /// Inverse of project() for a known depth: the orthographic projection drops z, so the caller supplies it
+    [[nodiscard]] Vec3 unproject(const float sx, const float sy, const float z) const {
+        return {
+            .x = (sx - _cx) / _scale,
+            .y = (_cy - sy) / _scale,
+            .z = z
+        };
+    }
+
 private:
     // (_cx, _cy) is the center
     float _cx;

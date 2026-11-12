@@ -10,11 +10,14 @@
 #include "math/Vec3.h"
 #include "renderer/MouseRotation.h"
 #include "renderer/Projection.h"
+#include "geometry/BezierCurve.h"
 #include "math/TestUtils.h"
 
 #include <QColor>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QImage>
 #include <QMouseEvent>
 #include <QPointF>
@@ -1330,6 +1333,307 @@ TEST(ViewportLightingTest, HighlightMovesAcrossSurfaceWhenRotated) {
     EXPECT_NEAR(back.v, before.v, 0.03f);
 }
 
+// ---------- 7: light path drawing, editing and reset ----------
+
+namespace {
+/// Viewport with the light path visible and everything else hidden; light red, so its dot isn't white
+void showOnlyLightPath(Viewport &viewport) {
+    viewport.setShowFill(false);
+    viewport.setShowMesh(false);
+    viewport.setShowPolygon(false);
+    viewport.setShowPoints(false);
+    viewport.setShowLightPath(true);
+    viewport.setLightColor(QColor(255, 0, 0));
+    viewport.setSurfaces({flatSquare()}); // render() draws nothing without surfaces
+    showViewport(viewport, kMeshImageSize);
+}
+
+/// Screen position of light path point i (the path is camera-fixed: no rotation)
+QPointF pathPointOnScreen(const Viewport &viewport, const int i) {
+    return sceneToScreen(viewport.lightPath().point(i));
+}
+
+/// Scene displacement of a mouse move from `from` to `to` on the plane of the light path
+Vec3 sceneDelta(const QPoint &from, const QPoint &to) {
+    const Projection proj(kMeshImageSize.width(), kMeshImageSize.height());
+    return proj.unproject(static_cast<float>(to.x()), static_cast<float>(to.y()), 0.0f)
+           - proj.unproject(static_cast<float>(from.x()), static_cast<float>(from.y()), 0.0f);
+}
+
+void expectPathEqual(const BezierCurve &actual, const BezierCurve &expected, const float eps = 1e-5f) {
+    ASSERT_EQ(actual.size(), expected.size());
+    for (int i = 0; i < actual.size(); ++i)
+        EXPECT_VEC3_NEAR(actual.point(i), expected.point(i), eps) << "point " << i;
+}
+
+/// Some pixel drawn on the middle part (30%..70%) of the segment a-b: a dotted or dashed line has gaps
+bool drawnAlong(const QImage &img, const QPointF &a, const QPointF &b) {
+    for (int k = 30; k <= 70; ++k)
+        if (lineNear(img, a + (b - a) * (k / 100.0)))
+            return true;
+    return false;
+}
+} // namespace
+
+TEST(ViewportLightPathTest, DefaultPathIsCircleAboveScene) {
+    const Viewport viewport;
+    expectPathEqual(viewport.lightPath(),
+                    BezierCurve::circle(Viewport::kDefaultLightPathRadius, Viewport::kDefaultLightZ));
+    EXPECT_FLOAT_EQ(viewport.lightZ(), Viewport::kDefaultLightZ);
+    // inside the image, above every surface point (|P| <= kSceneRadius)
+    EXPECT_LE(Viewport::kDefaultLightPathRadius, Projection::kSceneRadius);
+    EXPECT_GT(Viewport::kDefaultLightZ, Projection::kSceneRadius);
+}
+
+TEST(ViewportLightPathTest, ControlPolygonAndPointsAreDrawn) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const QImage img = grabImage(viewport);
+    const BezierCurve &path = viewport.lightPath();
+    for (int i = 0; i < path.size(); ++i) {
+        SCOPED_TRACE(i);
+        const QPointF p = pathPointOnScreen(viewport, i);
+        if (i % 3 == 0)
+            EXPECT_TRUE(dotAt(img, p)) << "anchor is a filled square";
+        else
+            EXPECT_TRUE(lineNear(img, p + QPointF(3, 0)) || lineNear(img, p - QPointF(3, 0))) << "handle circle";
+    }
+    // anchor-handle lines of the control polygon lie off the curve, so they show the polygon itself
+    for (int s = 0; s < path.segments(); ++s) {
+        SCOPED_TRACE(s);
+        EXPECT_TRUE(drawnAlong(img, pathPointOnScreen(viewport, 3 * s), pathPointOnScreen(viewport, 3 * s + 1)));
+        EXPECT_TRUE(drawnAlong(img, pathPointOnScreen(viewport, 3 * s + 2),
+                               pathPointOnScreen(viewport, (3 * s + 3) % path.size())));
+    }
+}
+
+TEST(ViewportLightPathTest, DragNearPointMovesItByMouseDeltaWithoutRotating) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const Mat3 rotation = viewport.rotation();
+    const BezierCurve before = viewport.lightPath();
+    for (const int i : {1, 3}) { // a handle and an anchor
+        SCOPED_TRACE(i);
+        const BezierCurve start = viewport.lightPath();
+        const QPoint from = pathPointOnScreen(viewport, i).toPoint() + QPoint(-3, 2); // near, not exactly on it
+        const QPoint to = from + QPoint(-40, 25);
+        drag(viewport, from, to);
+        const Vec3 expected = start.point(i) + sceneDelta(from, to);
+        EXPECT_VEC3_NEAR(viewport.lightPath().point(i), expected, 1e-4f);
+        EXPECT_FLOAT_EQ(viewport.lightPath().point(i).z, before.z());
+        for (int j = 0; j < start.size(); ++j)
+            if (j != i)
+                EXPECT_VEC3_EQ(viewport.lightPath().point(j), start.point(j)) << "point " << j << " moved too";
+    }
+    EXPECT_MAT3_EQ(viewport.rotation(), rotation);
+}
+
+TEST(ViewportLightPathTest, GrabbedPointDoesNotJumpToCursor) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const Vec3 before = viewport.lightPath().point(1);
+    const QPoint grab = pathPointOnScreen(viewport, 1).toPoint() + QPoint(-5, 0);
+    press(viewport, grab);
+    move(viewport, grab);
+    release(viewport, grab);
+    EXPECT_VEC3_NEAR(viewport.lightPath().point(1), before, 1e-4f);
+}
+
+TEST(ViewportLightPathTest, DragAwayFromPointsRotatesAndKeepsPath) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const Mat3 initial = viewport.rotation();
+    const BezierCurve before = viewport.lightPath();
+    drag(viewport, {300, 300}, {330, 290}); // screen centre: far from the circle
+    EXPECT_MAT3_EQ(viewport.rotation(), applyDrag(initial, 30.0f, -10.0f));
+    expectPathEqual(viewport.lightPath(), before);
+}
+
+TEST(ViewportLightPathTest, PressJustOutsidePickRadiusRotates) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const Mat3 initial = viewport.rotation();
+    const BezierCurve before = viewport.lightPath();
+    // handle 1 is on the right edge: go left, away from the other points
+    const QPointF p = pathPointOnScreen(viewport, 1);
+    const QPoint from(static_cast<int>(std::floor(p.x() - Viewport::kPickRadius - 2.0f)), static_cast<int>(p.y()));
+    drag(viewport, from, from + QPoint(-20, 0));
+    EXPECT_MAT3_EQ(viewport.rotation(), applyDrag(initial, -20.0f, 0.0f));
+    expectPathEqual(viewport.lightPath(), before);
+}
+
+TEST(ViewportLightPathTest, HiddenPathCannotBeGrabbed) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    viewport.setShowLightPath(false);
+    const Mat3 initial = viewport.rotation();
+    const BezierCurve before = viewport.lightPath();
+    const QPoint from = pathPointOnScreen(viewport, 1).toPoint();
+    drag(viewport, from, from + QPoint(-30, 0));
+    EXPECT_MAT3_EQ(viewport.rotation(), applyDrag(initial, -30.0f, 0.0f));
+    expectPathEqual(viewport.lightPath(), before);
+}
+
+TEST(ViewportLightPathTest, PointCannotBeDraggedOutOfImage) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    for (const QPoint target : {QPoint(-500, 2000), QPoint(5000, -300)}) {
+        const QPoint from = pathPointOnScreen(viewport, 1).toPoint();
+        drag(viewport, from, target);
+        const QPointF p = pathPointOnScreen(viewport, 1);
+        // the grab offset is under 1 px when pressed at the rounded position
+        EXPECT_GE(p.x(), -1.0);
+        EXPECT_LE(p.x(), kMeshImageSize.width());
+        EXPECT_GE(p.y(), -1.0);
+        EXPECT_LE(p.y(), kMeshImageSize.height());
+    }
+}
+
+TEST(ViewportLightPathTest, NearestOfTwoClosePointsIsPicked) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    // put handle 1 five pixels left of anchor 0 (exact position: drag starts at the point itself)
+    const QPoint anchor = pathPointOnScreen(viewport, 0).toPoint();
+    const QPointF handle = pathPointOnScreen(viewport, 1);
+    drag(viewport, handle.toPoint(), handle.toPoint() + (anchor + QPoint(-5, 0) - handle.toPoint()));
+    ASSERT_NEAR(pathPointOnScreen(viewport, 1).x(), anchor.x() - 5, 1.0);
+    ASSERT_NEAR(pathPointOnScreen(viewport, 1).y(), anchor.y(), 1.0);
+
+    // 1 px right of the handle: both are within reach (anchor 4 px away), the handle is closer
+    // (it comes after the anchor in the point order, so "first point in reach" would pick the anchor)
+    const QPoint handleNow = pathPointOnScreen(viewport, 1).toPoint();
+    BezierCurve before = viewport.lightPath();
+    drag(viewport, handleNow + QPoint(1, 0), handleNow + QPoint(1, -20));
+    EXPECT_GT(length(viewport.lightPath().point(1) - before.point(1)), 0.1f) << "handle should move";
+    EXPECT_VEC3_EQ(viewport.lightPath().point(0), before.point(0));
+
+    // the handle is now 20 px up: 1 px right of the anchor picks the anchor
+    before = viewport.lightPath();
+    drag(viewport, anchor + QPoint(1, 0), anchor + QPoint(1, 20));
+    EXPECT_GT(length(viewport.lightPath().point(0) - before.point(0)), 0.1f) << "anchor should move";
+    EXPECT_VEC3_EQ(viewport.lightPath().point(1), before.point(1));
+}
+
+TEST(ViewportLightPathTest, DraggingPointMovesLightAndRedraws) {
+    // the light is on the curve: moving the point under it moves the light and changes the image
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const Vec3 light = viewport.lightPosition(); // t = 0: anchor 0
+    const QImage before = grabImage(viewport);
+    const QPoint from = pathPointOnScreen(viewport, 0).toPoint();
+    drag(viewport, from, from + QPoint(-60, 30));
+    EXPECT_GT(length(viewport.lightPosition() - light), 0.5f);
+    EXPECT_NE(grabImage(viewport), before);
+}
+
+TEST(ViewportLightPathTest, ResetRestoresDefaultShapeKeepingHeight) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const QImage original = grabImage(viewport);
+    const QPoint from = pathPointOnScreen(viewport, 4).toPoint() + QPoint(0, 1);
+    drag(viewport, from, from + QPoint(50, 80));
+    viewport.setLightZ(12.5f);
+    ASSERT_NE(grabImage(viewport), original);
+
+    viewport.resetLightPath();
+    expectPathEqual(viewport.lightPath(), BezierCurve::circle(Viewport::kDefaultLightPathRadius, 12.5f));
+    EXPECT_FLOAT_EQ(viewport.lightZ(), 12.5f);
+    // the path is drawn as in the beginning (height doesn't change the orthographic image of the path)
+    EXPECT_EQ(grabImage(viewport), original);
+}
+
+TEST(ViewportLightPathTest, ResetDuringDragReleasesThePoint) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const QPoint from = pathPointOnScreen(viewport, 1).toPoint();
+    press(viewport, from);
+    viewport.resetLightPath();
+    move(viewport, from + QPoint(-40, 40));
+    release(viewport, from + QPoint(-40, 40));
+    expectPathEqual(viewport.lightPath(), BezierCurve::circle(Viewport::kDefaultLightPathRadius, viewport.lightZ()));
+}
+
+// ---------- 7: light animation ----------
+
+TEST(ViewportAnimationTest, StoppedByDefaultAndToggles) {
+    Viewport viewport;
+    EXPECT_FALSE(viewport.isAnimating());
+    viewport.setAnimating(true);
+    EXPECT_TRUE(viewport.isAnimating());
+    viewport.setAnimating(true); // again: still running
+    EXPECT_TRUE(viewport.isAnimating());
+    viewport.setAnimating(false);
+    EXPECT_FALSE(viewport.isAnimating());
+}
+
+TEST(ViewportAnimationTest, StepMovesLightAlongPathWithConstantSpeed) {
+    Viewport viewport;
+    EXPECT_FLOAT_EQ(viewport.lightT(), 0.0f);
+    EXPECT_VEC3_EQ(viewport.lightPosition(), viewport.lightPath().evaluate(0.0f));
+    viewport.stepAnimation(0.5f);
+    EXPECT_FLOAT_EQ(viewport.lightT(), Viewport::kLightSpeed * 0.5f);
+    EXPECT_VEC3_EQ(viewport.lightPosition(), viewport.lightPath().evaluate(Viewport::kLightSpeed * 0.5f));
+    // two half steps = one full step: speed doesn't depend on how the time is split into frames
+    Viewport other;
+    other.stepAnimation(1.0f);
+    viewport.stepAnimation(0.5f);
+    EXPECT_NEAR(viewport.lightT(), other.lightT(), 1e-6f);
+}
+
+TEST(ViewportAnimationTest, FullLapReturnsToStartAndParameterStaysWrapped) {
+    Viewport viewport;
+    const Vec3 start = viewport.lightPosition();
+    const auto segments = static_cast<float>(viewport.lightPath().segments());
+    const float lap = segments / Viewport::kLightSpeed; // seconds
+    constexpr int kSteps = 400;
+    for (int k = 0; k < 3 * kSteps; ++k) { // three laps in small steps
+        viewport.stepAnimation(lap / kSteps);
+        ASSERT_GE(viewport.lightT(), 0.0f);
+        ASSERT_LT(viewport.lightT(), segments);
+    }
+    EXPECT_VEC3_NEAR(viewport.lightPosition(), start, 1e-2f);
+}
+
+TEST(ViewportAnimationTest, StepChangesImage) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.0f, 4.0f)});
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    viewport.stepAnimation(1.0f);
+    EXPECT_NE(grabImage(viewport), before);
+}
+
+TEST(ViewportAnimationTest, SetLightZMovesLightAndRedraws) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.0f, 4.0f)});
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    const Vec3 light = viewport.lightPosition();
+    viewport.setLightZ(15.0f);
+    EXPECT_FLOAT_EQ(viewport.lightZ(), 15.0f);
+    EXPECT_VEC3_EQ(viewport.lightPosition(), (Vec3{light.x, light.y, 15.0f}));
+    EXPECT_NE(grabImage(viewport), before);
+    // ends of the range are accepted
+    viewport.setLightZ(Viewport::kMinLightZ);
+    viewport.setLightZ(Viewport::kMaxLightZ);
+}
+
+TEST(ViewportAnimationTest, RunningTimerMovesLight) {
+    // the only test with real time: just "it moves", no exact values (CI machines are slow)
+    Viewport viewport;
+    viewport.resize(kMeshImageSize);
+    viewport.setAnimating(true);
+    QElapsedTimer clock;
+    clock.start();
+    while (viewport.lightT() == 0.0f && clock.elapsed() < 3000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    EXPECT_GT(viewport.lightT(), 0.0f);
+    viewport.setAnimating(false);
+    const float stopped = viewport.lightT();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    EXPECT_FLOAT_EQ(viewport.lightT(), stopped) << "light moves after stop";
+}
+
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
     GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork
@@ -1341,5 +1645,11 @@ TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
 TEST(ViewportDeathTest, RejectsInvalidLightColor) {
     Viewport viewport;
     EXPECT_DEATH(viewport.setLightColor(QColor()), "invalid light color");
+}
+
+TEST(ViewportDeathTest, RejectsLightZOutOfRange) {
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setLightZ(Viewport::kMinLightZ - 0.1f), "light z out of range");
+    EXPECT_DEATH(viewport.setLightZ(Viewport::kMaxLightZ + 0.1f), "light z out of range");
 }
 #endif

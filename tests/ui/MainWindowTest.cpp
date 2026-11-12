@@ -4,13 +4,17 @@
 #include "ui/MainWindow.h"
 #include "ui/Viewport.h"
 
+#include "geometry/BezierCurve.h"
 #include "geometry/Mesh.h"
+#include "renderer/Projection.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QPushButton>
 #include <QColorDialog>
+#include <QCoreApplication>
+#include <QMouseEvent>
 #include <QTimer>
 #include <QLabel>
 #include <QList>
@@ -315,4 +319,104 @@ TEST(MainWindowLightingTest, MenuAndPanelShareTheLightColor) {
     answerColorDialog([action] { action->trigger(); }, viewport->lightColor(), QColor(250, 10, 10), true);
     EXPECT_EQ(swatchColor(*button), QColor(250, 10, 10));
     answerColorDialog([button] { button->click(); }, QColor(250, 10, 10), QColor(250, 10, 10), true);
+}
+
+// ---------- light animation and path (stage 7) ----------
+
+TEST(MainWindowLightPathTest, LightPathCheckBoxStartsCheckedAndToggles) {
+    // a bare Viewport hides the path, the program shows it from the start
+    const MainWindow window;
+    Viewport *viewport = findViewport(window);
+    QCheckBox *box = findCheckBox(window, "Light path");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(box, nullptr);
+    EXPECT_TRUE(box->isChecked());
+    EXPECT_TRUE(viewport->showLightPath());
+    box->setChecked(false);
+    EXPECT_FALSE(viewport->showLightPath());
+    box->setChecked(true);
+    EXPECT_TRUE(viewport->showLightPath());
+}
+
+TEST(MainWindowLightPathTest, AnimationRunsFromStartAndButtonToggles) {
+    const MainWindow window;
+    Viewport *viewport = findViewport(window);
+    auto *button = window.findChild<QPushButton *>("animationButton");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(button, nullptr);
+    EXPECT_TRUE(button->isCheckable());
+    EXPECT_TRUE(viewport->isAnimating());
+    EXPECT_TRUE(button->isChecked());
+    EXPECT_EQ(button->text(), "Stop animation");
+
+    button->click();
+    EXPECT_FALSE(viewport->isAnimating());
+    EXPECT_FALSE(button->isChecked());
+    EXPECT_EQ(button->text(), "Start animation");
+
+    button->click();
+    EXPECT_TRUE(viewport->isAnimating());
+    EXPECT_EQ(button->text(), "Stop animation");
+}
+
+TEST(MainWindowLightPathTest, ZSliderCoversRangeAndSetsLightZAndLabel) {
+    const MainWindow window;
+    Viewport *viewport = findViewport(window);
+    const LightSlider z = findLightSlider(window, "z");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(z.slider, nullptr);
+    ASSERT_NE(z.label, nullptr);
+    EXPECT_EQ(z.slider->minimum(), std::lround(Viewport::kMinLightZ * 10.0f));
+    EXPECT_EQ(z.slider->maximum(), std::lround(Viewport::kMaxLightZ * 10.0f));
+    EXPECT_EQ(z.slider->value(), std::lround(viewport->lightZ() * 10.0f));
+    EXPECT_EQ(z.label->text(), QString("z = %1").arg(viewport->lightZ(), 0, 'f', 1));
+
+    z.slider->setValue(125);
+    EXPECT_FLOAT_EQ(viewport->lightZ(), 12.5f);
+    EXPECT_EQ(z.label->text(), "z = 12.5");
+    // the other lighting parameters stay
+    const float kd = viewport->kd(), ks = viewport->ks(), m = viewport->m();
+    z.slider->setValue(z.slider->minimum());
+    z.slider->setValue(z.slider->maximum());
+    EXPECT_FLOAT_EQ(viewport->lightZ(), Viewport::kMaxLightZ);
+    EXPECT_FLOAT_EQ(viewport->kd(), kd);
+    EXPECT_FLOAT_EQ(viewport->ks(), ks);
+    EXPECT_FLOAT_EQ(viewport->m(), m);
+}
+
+namespace {
+void sendMouseTo(Viewport &viewport, const QEvent::Type type, const QPoint &pos, const Qt::MouseButton button,
+                 const Qt::MouseButtons buttons) {
+    const QPointF local(pos);
+    QMouseEvent event(type, local, viewport.mapToGlobal(local), button, buttons, Qt::NoModifier);
+    QCoreApplication::sendEvent(&viewport, &event);
+}
+} // namespace
+
+TEST(MainWindowLightPathTest, MenuActionResetsDraggedPath) {
+    MainWindow window;
+    Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("resetLightPathAction");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    EXPECT_EQ(action->text(), "Reset light path");
+
+    // drag handle 1 with the mouse, as the user would
+    viewport->resize(600, 600);
+    viewport->grab(); // creates the frame, so points can be picked
+    const Projection proj(viewport->width(), viewport->height());
+    const ScreenPoint sp = proj.project(viewport->lightPath().point(1));
+    const QPoint from(static_cast<int>(sp.x), static_cast<int>(sp.y));
+    const QPoint to = from + QPoint(-80, 60);
+    sendMouseTo(*viewport, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    sendMouseTo(*viewport, QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton);
+    sendMouseTo(*viewport, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+    const BezierCurve circle = BezierCurve::circle(Viewport::kDefaultLightPathRadius, viewport->lightZ());
+    ASSERT_GT(length(viewport->lightPath().point(1) - circle.point(1)), 0.5f) << "drag didn't move the point";
+
+    action->trigger();
+    for (int i = 0; i < circle.size(); ++i) {
+        const Vec3 d = viewport->lightPath().point(i) - circle.point(i);
+        EXPECT_LT(length(d), 1e-5f) << "point " << i;
+    }
 }

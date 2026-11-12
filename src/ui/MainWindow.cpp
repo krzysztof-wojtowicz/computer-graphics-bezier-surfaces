@@ -129,6 +129,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *lightColorAction = lightingMenu->addAction("Light color...");
     lightColorAction->setObjectName("lightColorAction");
     connect(lightColorAction, &QAction::triggered, this, &MainWindow::chooseLightColor);
+    auto *resetLightPathAction = lightingMenu->addAction("Reset light path");
+    resetLightPathAction->setObjectName("resetLightPathAction");
+    connect(resetLightPathAction, &QAction::triggered, m_viewport, &Viewport::resetLightPath);
 
     // Set central widget, window title and window size
     setCentralWidget(central);

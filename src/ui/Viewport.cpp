@@ -5,6 +5,8 @@
 #include <QPointF>
 #include <QLineF>
 #include <QPen>
+#include <QPolygonF>
+#include <QRectF>
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -141,6 +143,14 @@ void Viewport::setLightZ(const float z) {
     update();
 }
 
+void Viewport::resetLightPath() {
+    m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, lightZ());
+    m_draggedPoint = -1; // a reset during a drag must not keep moving a point of the old curve
+
+    render();
+    update();
+}
+
 
 /// Generates mesh for each Bezier Surface
 void Viewport::setSurfaces(const std::vector<BezierSurface> &surfaces) {
@@ -170,29 +180,74 @@ void Viewport::resizeEvent(QResizeEvent *) {
     render();
 }
 
+/// A press near a visible light path point grabs the point, anywhere else it starts rotating the scene
 void Viewport::mousePressEvent(QMouseEvent *event) {
-    if (event->button() == Qt::LeftButton) {
-        m_lastMousePos = event->position().toPoint();
-        setCursor(Qt::ClosedHandCursor);
-    } else {
+    if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
+        return;
+    }
+
+    m_lastMousePos = event->position().toPoint();
+    m_draggedPoint = pickLightPathPoint(event->position());
+    if (m_draggedPoint >= 0) {
+        const Projection proj(m_frame.width(), m_frame.height());
+        const auto pos = event->position();
+        m_dragOffset = m_lightPath.point(m_draggedPoint)
+                       - proj.unproject(static_cast<float>(pos.x()), static_cast<float>(pos.y()), lightZ());
+        setCursor(Qt::SizeAllCursor);
+    } else {
+        setCursor(Qt::ClosedHandCursor);
     }
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent *event) {
-    if (event->buttons() & Qt::LeftButton) {
+    if (!(event->buttons() & Qt::LeftButton)) return;
+
+    if (m_draggedPoint >= 0) {
+        // the light path is camera-fixed (not rotated), so the screen maps straight to its plane z = const;
+        // the cursor is kept inside the widget so a point can't be dragged out of sight
+        const Projection proj(m_frame.width(), m_frame.height());
+        const float x = std::clamp(static_cast<float>(event->position().x()), 0.0f,
+                                   static_cast<float>(m_frame.width() - 1));
+        const float y = std::clamp(static_cast<float>(event->position().y()), 0.0f,
+                                   static_cast<float>(m_frame.height() - 1));
+        const Vec3 p = proj.unproject(x, y, lightZ()) + m_dragOffset;
+        m_lightPath.movePoint(m_draggedPoint, p.x, p.y);
+    } else {
         const auto pos = event->position().toPoint();
         const auto delta = pos - m_lastMousePos;
         m_lastMousePos = pos;
         m_rotation = applyDrag(m_rotation, static_cast<float>(delta.x()), static_cast<float>(delta.y()));
         applyRotationToMeshes();
-        render();
-        update();
     }
+    render();
+    update();
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent *) {
+    m_draggedPoint = -1;
     unsetCursor();
+}
+
+/// Index of the light path control point closest to pos within kPickRadius, -1 if none.
+/// Hidden points can't be grabbed, so with the path switched off the mouse always rotates.
+int Viewport::pickLightPathPoint(const QPointF &pos) const {
+    if (!m_showLightPath || m_frame.isNull()) return -1;
+
+    const Projection proj(m_frame.width(), m_frame.height());
+    int best = -1;
+    float bestDist2 = kPickRadius * kPickRadius;
+    for (int i = 0; i < m_lightPath.size(); ++i) {
+        const ScreenPoint sp = proj.project(m_lightPath.point(i));
+        const float dx = sp.x - static_cast<float>(pos.x());
+        const float dy = sp.y - static_cast<float>(pos.y());
+        const float dist2 = dx * dx + dy * dy;
+        if (dist2 <= bestDist2) {
+            bestDist2 = dist2;
+            best = i;
+        }
+    }
+    return best;
 }
 
 /// Renders image in the viewport, <br>
@@ -422,33 +477,44 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
     }
 }
 
+/// Control polygon under the curve, curve, control points, light on top (no Z-buffer: the light is above the scene)
 void Viewport::drawLightPath(const Projection &proj, QPainter &painter) const {
-    painter.setPen(QPen(QColor(0, 0, 0), 1, Qt::DashLine));
+    const auto toScreen = [&proj](const Vec3 &p) {
+        const ScreenPoint sp = proj.project(p);
+        return QPointF(sp.x, sp.y);
+    };
 
-    // get points representing light path
-    const auto lightPoints = m_lightPath.sample(32);
-    const int n = static_cast<int>(lightPoints.size());
+    // control polygon: consecutive points, closed (P[3K-1] -> P[0] is the last handle of the last segment)
+    const auto &points = m_lightPath.points();
+    QPolygonF polygon;
+    for (const auto &p: points)
+        polygon << toScreen(p);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(kLightPathPolygonColor, 1, Qt::DotLine));
+    painter.drawPolygon(polygon);
 
-    // project points
-    std::vector<ScreenPoint> lightScreenPoints(n);
-    for (int i = 0; i < n; ++i) {
-        lightScreenPoints[i] = proj.project(lightPoints[i]);
+    // the curve itself as a closed polyline
+    QPolygonF curve;
+    for (const auto &p: m_lightPath.sample(kLightPathSamples))
+        curve << toScreen(p);
+    painter.setPen(QPen(kLightPathColor, 1, Qt::DashLine));
+    painter.drawPolygon(curve);
+
+    // anchors (on the curve) as squares, handles as circles
+    painter.setPen(QPen(kLightPathColor, 1));
+    for (int i = 0; i < m_lightPath.size(); ++i) {
+        const QPointF c = toScreen(m_lightPath.point(i));
+        const bool anchor = i % 3 == 0;
+        // anchors filled, handles hollow; the grabbed point is filled too
+        painter.setBrush(anchor || i == m_draggedPoint ? kLightPathColor : QColor(Qt::white));
+        if (anchor)
+            painter.drawRect(QRectF(c.x() - kPointRadius, c.y() - kPointRadius, 2 * kPointRadius, 2 * kPointRadius));
+        else
+            painter.drawEllipse(c, kPointRadius, kPointRadius);
     }
 
-    // draw lines
-    for (int i = 0; i < n; ++i) {
-        painter.drawLine(QLineF(
-            QPointF(lightScreenPoints[i].x, lightScreenPoints[i].y),
-            QPointF(lightScreenPoints[(i + 1) % n].x, lightScreenPoints[(i + 1) % n].y)
-        ));
-    }
-
-    painter.setPen(QPen(QColor(0, 0, 0), 1, Qt::SolidLine));
+    // current light position
+    painter.setPen(QPen(kLightPathColor, 1));
     painter.setBrush(lightColor());
-    const auto sp = proj.project(lightPosition());
-    painter.drawEllipse(
-        QPointF(sp.x, sp.y),
-        kPointRadius * 3,
-        kPointRadius * 3);
-
+    painter.drawEllipse(toScreen(lightPosition()), kPointRadius * 3, kPointRadius * 3);
 }
