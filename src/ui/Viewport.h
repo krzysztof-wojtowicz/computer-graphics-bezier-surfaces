@@ -47,6 +47,8 @@ public:
     explicit Viewport(QWidget *parent = nullptr);
 
     // --- GETTERS ---
+    /// Orientation the program starts with (looking at the surfaces from above, at an angle)
+    [[nodiscard]] static Mat3 initialRotation() { return rotationX(-1.0f) * rotationZ(0.5f); }
     [[nodiscard]] const Mat3 &rotation() const { return m_rotation; }
     [[nodiscard]] const std::vector<Mesh> &meshes() const { return m_meshes; }
     [[nodiscard]] int resolution() const { return m_resolution; }
@@ -95,6 +97,8 @@ public:
     void setLightZ(float z);
     /// Restores the default shape of the light path; keeps its height (set by the z slider) and the light's t
     void resetLightPath();
+    /// Back to initialRotation(); the light path is bound to the camera, so it doesn't change
+    void resetRotation();
 
     void setSurfaces(const std::vector<BezierSurface> &surfaces);
 
@@ -123,7 +127,7 @@ private:
     // --- STATES ---
     QImage m_frame;
     std::vector<Mesh> m_meshes; // meshes for all surfaces
-    Mat3 m_rotation = rotationX(-1.0f) * rotationZ(0.5f); // current rotation
+    Mat3 m_rotation = initialRotation(); // current rotation
     QPoint m_lastMousePos; // last mouse position
     int m_draggedPoint = -1; // index of the light path point being dragged, -1 = the mouse rotates the scene
     Vec3 m_dragOffset; // point - mouse in scene units, so the point doesn't jump to the cursor when grabbed

@@ -2216,6 +2216,24 @@ TEST(ViewportNormalMapTest, SwitchingNormalMapOffRestoresImage) {
     EXPECT_EQ(grabImage(viewport), before);
 }
 
+// ---------- 8b: reset rotation ----------
+
+TEST(ViewportMouseTest, ResetRotationRestoresInitialViewAndImage) {
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    EXPECT_MAT3_EQ(viewport.rotation(), Viewport::initialRotation());
+    const QImage initial = showViewport(viewport, kMeshImageSize);
+
+    drag(viewport, QPoint(300, 300), QPoint(380, 250));
+    ASSERT_NE(grabImage(viewport), initial);
+    const BezierCurve path = viewport.lightPath();
+
+    viewport.resetRotation();
+    EXPECT_MAT3_EQ(viewport.rotation(), Viewport::initialRotation());
+    EXPECT_EQ(grabImage(viewport), initial) << "meshes rotated back and the image redrawn";
+    expectPathEqual(viewport.lightPath(), path); // the light path is bound to the camera, not to the scene
+}
+
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
     GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork

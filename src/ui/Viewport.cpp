@@ -186,6 +186,14 @@ void Viewport::setNormalMap(Texture normalMap) {
     update();
 }
 
+void Viewport::resetRotation() {
+    m_rotation = initialRotation();
+    applyRotationToMeshes();
+
+    render();
+    update();
+}
+
 void Viewport::resetLightPath() {
     m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, lightZ());
     m_draggedPoint = -1; // a reset during a drag must not keep moving a point of the old curve

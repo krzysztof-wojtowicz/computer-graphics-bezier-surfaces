@@ -13,6 +13,10 @@
 #include <QGroupBox>
 #include <QColorDialog>
 #include <QMenuBar>
+#include <QEvent>
+#include <QList>
+#include <QMenu>
+#include <QKeySequence>
 #include <QAction>
 #include <QIcon>
 #include <QPixmap>
@@ -193,22 +197,81 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     panelLayout->addStretch();
     layout->addWidget(panel);
 
-    // Colors are picked in a dialog, so they live in the menu, not in the side panel
-    auto *lightingMenu = menuBar()->addMenu("Lighting");
-    auto *lightColorAction = lightingMenu->addAction("Light color...");
-    lightColorAction->setObjectName("lightColorAction");
-    connect(lightColorAction, &QAction::triggered, this, &MainWindow::chooseLightColor);
-    auto *resetLightPathAction = lightingMenu->addAction("Reset light path");
-    resetLightPathAction->setObjectName("resetLightPathAction");
-    connect(resetLightPathAction, &QAction::triggered, m_viewport, &Viewport::resetLightPath);
+    // ---------- menus ----------
+    // Every action has a keyboard shortcut (the documentation lists them). "Ctrl" is Cmd on macOS.
+    // Checkable actions mirror a control in the panel both ways; setChecked() with the same value emits nothing,
+    // so the two connections don't loop.
+    const auto addAction = [](QMenu *menu, const QString &text, const QString &name, const QKeySequence &shortcut) {
+        auto *action = menu->addAction(text);
+        action->setObjectName(name);
+        action->setShortcut(shortcut);
+        return action;
+    };
+
+    auto *fileMenu = menuBar()->addMenu("File");
+    auto *quitAction = addAction(fileMenu, "Quit", "quitAction", QKeySequence(Qt::CTRL | Qt::Key_Q));
+    connect(quitAction, &QAction::triggered, this, &QWidget::close);
+
+    // not "View": macOS adds its own "Enter Full Screen" items to a menu with that title, and Qt maps the native
+    // menu items by position, so the shortcuts of that menu stopped working (Reset rotation, full screen)
+    auto *sceneMenu = menuBar()->addMenu("Scene");
+    // a single key like T, N and Space (Cmd+0 was easy to confuse with Cmd+O)
+    auto *resetRotationAction = addAction(sceneMenu, "Reset rotation", "resetRotationAction", QKeySequence(Qt::Key_R));
+    connect(resetRotationAction, &QAction::triggered, m_viewport, &Viewport::resetRotation);
+    // the platform's own full screen keys (Ctrl+Cmd+F on macOS, F11 on Windows) and F11 everywhere
+    m_fullScreenAction = addAction(sceneMenu, "Full screen", "fullScreenAction", QKeySequence(QKeySequence::FullScreen));
+    QList<QKeySequence> fullScreenKeys = QKeySequence::keyBindings(QKeySequence::FullScreen);
+    if (!fullScreenKeys.contains(QKeySequence(Qt::Key_F11)))
+        fullScreenKeys << QKeySequence(Qt::Key_F11);
+    m_fullScreenAction->setShortcuts(fullScreenKeys);
+    m_fullScreenAction->setCheckable(true);
+    connect(m_fullScreenAction, &QAction::toggled, this, [this](const bool on) {
+        if (on == isFullScreen()) return; // the window changed by itself, changeEvent() only updates the check
+        on ? showFullScreen() : showNormal();
+    });
 
     auto *surfaceMenu = menuBar()->addMenu("Surface");
-    auto *loadTextureAction = surfaceMenu->addAction("Load texture...");
-    loadTextureAction->setObjectName("loadTextureAction");
+    auto *textureAction = addAction(surfaceMenu, "Texture", "textureAction", QKeySequence(Qt::Key_T));
+    textureAction->setCheckable(true);
+    textureAction->setChecked(m_textureRadio->isChecked());
+    connect(textureAction, &QAction::toggled, this, [this, solidColorRadio](const bool on) {
+        (on ? m_textureRadio : solidColorRadio)->setChecked(true);
+    });
+    connect(m_textureRadio, &QRadioButton::toggled, textureAction, &QAction::setChecked);
+    auto *normalMapAction = addAction(surfaceMenu, "Normal map", "normalMapAction", QKeySequence(Qt::Key_N));
+    normalMapAction->setCheckable(true);
+    normalMapAction->setChecked(m_normalMapCheck->isChecked());
+    connect(normalMapAction, &QAction::toggled, m_normalMapCheck, &QCheckBox::setChecked);
+    connect(m_normalMapCheck, &QCheckBox::toggled, normalMapAction, &QAction::setChecked);
+    surfaceMenu->addSeparator();
+    auto *loadTextureAction = addAction(surfaceMenu, "Load texture...", "loadTextureAction",
+                                        QKeySequence(Qt::CTRL | Qt::Key_T));
     connect(loadTextureAction, &QAction::triggered, this, &MainWindow::chooseTextureFile);
-    auto *loadNormalMapAction = surfaceMenu->addAction("Load normal map...");
-    loadNormalMapAction->setObjectName("loadNormalMapAction");
+    // not Ctrl+M: Cmd+M minimizes the window on macOS
+    auto *loadNormalMapAction = addAction(surfaceMenu, "Load normal map...", "loadNormalMapAction",
+                                          QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
     connect(loadNormalMapAction, &QAction::triggered, this, &MainWindow::chooseNormalMapFile);
+    surfaceMenu->addSeparator();
+    // the solid color is "chosen from the menu" (task); the buttons in the panel open the same dialog
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        auto *colorAction = addAction(surfaceMenu, QString("Surface color %1...").arg(i + 1),
+                                      QString("surfaceColorAction%1").arg(i + 1),
+                                      QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i)));
+        connect(colorAction, &QAction::triggered, this, [this, i] { chooseSurfaceColor(i); });
+    }
+
+    auto *lightingMenu = menuBar()->addMenu("Lighting");
+    auto *animationAction = addAction(lightingMenu, "Animate light", "animationAction", QKeySequence(Qt::Key_Space));
+    animationAction->setCheckable(true);
+    animationAction->setChecked(animationButton->isChecked());
+    connect(animationAction, &QAction::toggled, animationButton, &QPushButton::setChecked);
+    connect(animationButton, &QPushButton::toggled, animationAction, &QAction::setChecked);
+    auto *lightColorAction = addAction(lightingMenu, "Light color...", "lightColorAction",
+                                       QKeySequence(Qt::CTRL | Qt::Key_L));
+    connect(lightColorAction, &QAction::triggered, this, &MainWindow::chooseLightColor);
+    auto *resetLightPathAction = addAction(lightingMenu, "Reset light path", "resetLightPathAction",
+                                           QKeySequence(Qt::CTRL | Qt::Key_R));
+    connect(resetLightPathAction, &QAction::triggered, m_viewport, &Viewport::resetLightPath);
 
     // Set central widget, window title and window size
     setCentralWidget(central);
@@ -334,4 +397,10 @@ void MainWindow::chooseNormalMapFile() {
     const QString path = QFileDialog::getOpenFileName(this, "Load normal map", QString(), kImageFilter);
     if (path.isEmpty()) return;
     loadNormalMapFrom(path);
+}
+
+void MainWindow::changeEvent(QEvent *event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange && m_fullScreenAction)
+        m_fullScreenAction->setChecked(isFullScreen()); // e.g. the green button on macOS
 }

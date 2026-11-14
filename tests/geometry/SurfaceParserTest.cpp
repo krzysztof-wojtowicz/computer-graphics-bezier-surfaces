@@ -261,10 +261,10 @@ protected:
     ParseResult result;
 };
 
-// TODO: restore when the second surface (saddle) is back in surfaces.txt (temporarily only one surface)
-// TEST_F(AssetSurfacesTest, ContainsTwoSurfaces) {
-//     EXPECT_EQ(result.surfaces.size(), 2u);
-// }
+TEST_F(AssetSurfacesTest, ContainsThreeSurfaces) {
+    // dome, irregular wave, saddle (the task requires at least two)
+    EXPECT_EQ(result.surfaces.size(), 3u);
+}
 
 TEST_F(AssetSurfacesTest, ControlPointsLieOnRegularGrid) {
     for (const BezierSurface &s : result.surfaces)
@@ -286,14 +286,30 @@ TEST_F(AssetSurfacesTest, NormalsPointUp) {
             }
 }
 
-// TODO: restore together with ContainsTwoSurfaces (needs the saddle)
-// TEST_F(AssetSurfacesTest, SurfacesIntersect) {
-//     // Needed to see the Z-buffer working in stage 5: the dome is above the saddle in the middle, below it at a corner
-//     ASSERT_EQ(result.surfaces.size(), 2u);
-//     const BezierSurface &dome = result.surfaces[0], &saddle = result.surfaces[1];
-//     EXPECT_GT(dome.evaluate(0.5f, 0.5f).P.z, saddle.evaluate(0.5f, 0.5f).P.z);
-//     EXPECT_LT(dome.evaluate(1.0f, 1.0f).P.z, saddle.evaluate(1.0f, 1.0f).P.z);
-// }
+TEST_F(AssetSurfacesTest, SurfacesIntersect) {
+    // Needed to see the Z-buffer working: every pair of surfaces swaps order between the middle and a corner
+    ASSERT_EQ(result.surfaces.size(), 3u);
+    const BezierSurface &dome = result.surfaces[0], &wave = result.surfaces[1], &saddle = result.surfaces[2];
+    const auto z = [](const BezierSurface &s, const float u, const float v) { return s.evaluate(u, v).P.z; };
+    // dome above the others in the middle (1.03 vs 0.39 and 0), below them at the corner (1, 1)
+    EXPECT_GT(z(dome, 0.5f, 0.5f), z(wave, 0.5f, 0.5f));
+    EXPECT_LT(z(dome, 1.0f, 1.0f), z(wave, 1.0f, 1.0f));
+    EXPECT_GT(z(dome, 0.5f, 0.5f), z(saddle, 0.5f, 0.5f));
+    EXPECT_LT(z(dome, 1.0f, 1.0f), z(saddle, 1.0f, 1.0f));
+    // wave above the saddle in the middle, below it at the corner (0, 0)
+    EXPECT_GT(z(wave, 0.5f, 0.5f), z(saddle, 0.5f, 0.5f));
+    EXPECT_LT(z(wave, 0.0f, 0.0f), z(saddle, 0.0f, 0.0f));
+}
+
+TEST_F(AssetSurfacesTest, ThirdSurfaceIsSaddle) {
+    // control points z = x * y / 4 give exactly the hyperbolic paraboloid z = x * y / 4
+    ASSERT_EQ(result.surfaces.size(), 3u);
+    for (const float u : {0.0f, 0.3f, 0.5f, 0.8f, 1.0f})
+        for (const float v : {0.0f, 0.2f, 0.5f, 0.9f, 1.0f}) {
+            const Vec3 P = result.surfaces[2].evaluate(u, v).P;
+            EXPECT_NEAR(P.z, 0.25f * P.x * P.y, 1e-5f) << "u = " << u << ", v = " << v;
+        }
+}
 
 TEST_F(AssetSurfacesTest, ContainsAtLeastOneSurface) {
     EXPECT_GE(result.surfaces.size(), 1u);
