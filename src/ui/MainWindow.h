@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QMainWindow>
@@ -25,6 +26,10 @@ public:
     /// The same for the normal map: loads it and switches the normal map on
     bool loadNormalMapFrom(const QString &path);
 
+protected:
+    /// Keeps the "Full screen" action checked in sync when the window leaves full screen by other means
+    void changeEvent(QEvent *event) override;
+
 private:
     void loadDefaultSurfaces();
     void loadDefaultImages();
@@ -45,4 +50,5 @@ private:
     QComboBox *m_textureCombo = nullptr;
     QCheckBox *m_normalMapCheck = nullptr;
     QComboBox *m_normalMapCombo = nullptr;
+    QAction *m_fullScreenAction = nullptr;
 };

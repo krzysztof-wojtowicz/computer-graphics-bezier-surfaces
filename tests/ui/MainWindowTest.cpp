@@ -10,6 +10,11 @@
 #include "renderer/Projection.h"
 
 #include <QAbstractButton>
+#include <QKeySequence>
+#include <QMenu>
+#include <QMenuBar>
+#include <QSet>
+#include <QTest>
 #include <QAction>
 #include <QComboBox>
 #include <QFile>
@@ -748,4 +753,320 @@ TEST(MainWindowTextureTest, TextureStaysChosenWhenSwitchingToSolidColorAndBack) 
     texture->click();
     EXPECT_EQ(combo->currentIndex(), 1);
     EXPECT_TRUE(sameTexture(viewport->texture(), expectedImage(QString::fromUtf8(kBuiltInTextures[1].path))));
+}
+
+// ---------- 8b.1: surface colors from the menu ----------
+
+TEST(MainWindowColorTest, MenuActionsSetOnlyTheirOwnColorAndSwatch) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        auto *action = window.findChild<QAction *>(QString("surfaceColorAction%1").arg(i + 1));
+        QPushButton *button = findSurfaceColorButton(window, i);
+        ASSERT_NE(action, nullptr);
+        ASSERT_NE(button, nullptr);
+        EXPECT_EQ(action->text(), QString("Surface color %1...").arg(i + 1));
+        std::array<QColor, Viewport::kColorCount> before{};
+        for (int j = 0; j < Viewport::kColorCount; ++j)
+            before[j] = viewport->surfaceColor(j);
+
+        const QColor chosen(20 + 80 * i, 180 - 60 * i, 40);
+        answerColorDialog([action] { action->trigger(); }, before[i], chosen, true, QString("Surface color %1").arg(i + 1));
+        EXPECT_EQ(viewport->surfaceColor(i), chosen);
+        EXPECT_EQ(swatchColor(*button), chosen) << "the panel button shows the color chosen in the menu";
+        for (int j = 0; j < Viewport::kColorCount; ++j)
+            if (j != i)
+                EXPECT_EQ(viewport->surfaceColor(j), before[j]) << "color " << j << " changed too";
+    }
+}
+
+TEST(MainWindowColorTest, MenuAndPanelShareSurfaceColorAndCancelKeepsIt) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("surfaceColorAction3");
+    QPushButton *button = findSurfaceColorButton(window, 2);
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(button, nullptr);
+    answerColorDialog([button] { button->click(); }, viewport->surfaceColor(2), QColor(9, 99, 199), true, "Surface color 3");
+    // the menu dialog starts from the color chosen with the button; cancelling keeps it
+    answerColorDialog([action] { action->trigger(); }, QColor(9, 99, 199), QColor(255, 0, 0), false, "Surface color 3");
+    EXPECT_EQ(viewport->surfaceColor(2), QColor(9, 99, 199));
+}
+
+// ---------- 8b.2: keyboard shortcuts ----------
+
+namespace {
+/// Every shortcut of the program: action object name -> key sequence ("Ctrl" = Cmd on macOS).
+/// A function, not a global: QKeySequence::FullScreen asks the platform theme, which needs the QApplication
+std::vector<std::pair<QString, QKeySequence>> shortcuts() {
+    return {
+    {"quitAction", QKeySequence(Qt::CTRL | Qt::Key_Q)},
+    {"resetRotationAction", QKeySequence(Qt::Key_R)},
+    {"fullScreenAction", QKeySequence(QKeySequence::FullScreen)},
+    {"textureAction", QKeySequence(Qt::Key_T)},
+    {"normalMapAction", QKeySequence(Qt::Key_N)},
+    {"loadTextureAction", QKeySequence(Qt::CTRL | Qt::Key_T)},
+    {"loadNormalMapAction", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N)},
+    {"surfaceColorAction1", QKeySequence(Qt::CTRL | Qt::Key_1)},
+    {"surfaceColorAction2", QKeySequence(Qt::CTRL | Qt::Key_2)},
+    {"surfaceColorAction3", QKeySequence(Qt::CTRL | Qt::Key_3)},
+    {"animationAction", QKeySequence(Qt::Key_Space)},
+    {"lightColorAction", QKeySequence(Qt::CTRL | Qt::Key_L)},
+    {"resetLightPathAction", QKeySequence(Qt::CTRL | Qt::Key_R)},
+    };
+}
+
+/// Rotates the scene with a mouse drag in the middle of the viewport
+void dragScene(Viewport *viewport) {
+    const QPoint from = viewport->rect().center(), to = from + QPoint(50, 30);
+    QMouseEvent press(QEvent::MouseButtonPress, from, viewport->mapToGlobal(from), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &press);
+    QMouseEvent move(QEvent::MouseMove, to, viewport->mapToGlobal(to), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, viewport->mapToGlobal(to), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &release);
+}
+
+/// Shows the window and makes it active: window shortcuts only work in the active window
+bool showActive(MainWindow &window) {
+    window.show();
+    window.activateWindow();
+    return QTest::qWaitForWindowActive(&window);
+}
+} // namespace
+
+TEST(MainWindowShortcutTest, EveryActionHasItsShortcut) {
+    MainWindow window;
+    for (const auto &[name, keys] : shortcuts()) {
+        auto *action = window.findChild<QAction *>(name);
+        ASSERT_NE(action, nullptr) << name.toStdString();
+        EXPECT_EQ(action->shortcut(), keys) << name.toStdString();
+    }
+}
+
+TEST(MainWindowShortcutTest, ShortcutsAreUniqueAndEveryMenuActionHasOne) {
+    // a shortcut used twice is ambiguous: Qt then triggers neither action
+    MainWindow window;
+    QSet<QString> seen;
+    for (QAction *action : window.findChildren<QAction *>()) {
+        if (action->isSeparator() || action->menu() || action->objectName().isEmpty()) continue;
+        const QString keys = action->shortcut().toString();
+        EXPECT_FALSE(keys.isEmpty()) << action->objectName().toStdString() << " has no shortcut";
+        EXPECT_FALSE(seen.contains(keys)) << keys.toStdString() << " used twice";
+        seen.insert(keys);
+    }
+    EXPECT_EQ(seen.size(), static_cast<qsizetype>(shortcuts().size())) << "shortcuts() must list every action";
+}
+
+TEST(MainWindowShortcutTest, AnimationActionAndButtonStayInSync) {
+    MainWindow window;
+    Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("animationAction");
+    auto *button = window.findChild<QPushButton *>("animationButton");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(button, nullptr);
+    ASSERT_TRUE(action->isChecked());
+
+    action->trigger();
+    EXPECT_FALSE(viewport->isAnimating());
+    EXPECT_FALSE(button->isChecked());
+    EXPECT_EQ(button->text(), "Start animation");
+
+    button->click();
+    EXPECT_TRUE(viewport->isAnimating());
+    EXPECT_TRUE(action->isChecked());
+}
+
+TEST(MainWindowShortcutTest, TextureActionAndRadioButtonsStayInSync) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("textureAction");
+    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
+    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(solid, nullptr);
+    ASSERT_NE(texture, nullptr);
+    EXPECT_FALSE(action->isChecked());
+
+    action->trigger();
+    EXPECT_TRUE(viewport->useTexture());
+    EXPECT_TRUE(texture->isChecked());
+    action->trigger();
+    EXPECT_FALSE(viewport->useTexture());
+    EXPECT_TRUE(solid->isChecked());
+
+    texture->click();
+    EXPECT_TRUE(action->isChecked());
+    solid->click();
+    EXPECT_FALSE(action->isChecked());
+    // choosing a texture from the list switches it on: the menu shows that too
+    window.findChild<QComboBox *>("textureCombo")->setCurrentIndex(1);
+    EXPECT_TRUE(action->isChecked());
+}
+
+TEST(MainWindowShortcutTest, NormalMapActionAndCheckBoxStayInSync) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("normalMapAction");
+    auto *check = window.findChild<QCheckBox *>("normalMapCheck");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(check, nullptr);
+    EXPECT_FALSE(action->isChecked());
+
+    action->trigger();
+    EXPECT_TRUE(viewport->useNormalMap());
+    EXPECT_TRUE(check->isChecked());
+    check->click();
+    EXPECT_FALSE(viewport->useNormalMap());
+    EXPECT_FALSE(action->isChecked());
+}
+
+TEST(MainWindowShortcutTest, ResetRotationActionRestoresInitialView) {
+    MainWindow window;
+    Viewport *viewport = findViewport(window);
+    auto *action = window.findChild<QAction *>("resetRotationAction");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(action, nullptr);
+    window.show();
+    QCoreApplication::processEvents();
+    const QPoint from = viewport->rect().center();
+    QMouseEvent press(QEvent::MouseButtonPress, from, viewport->mapToGlobal(from), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &press);
+    const QPoint to = from + QPoint(60, -40);
+    QMouseEvent move(QEvent::MouseMove, to, viewport->mapToGlobal(to), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, viewport->mapToGlobal(to), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &release);
+    ASSERT_NE(viewport->rotation().m, Viewport::initialRotation().m);
+
+    action->trigger();
+    EXPECT_EQ(viewport->rotation().m, Viewport::initialRotation().m);
+}
+
+TEST(MainWindowShortcutTest, QuitActionClosesWindow) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *action = window.findChild<QAction *>("quitAction");
+    ASSERT_NE(action, nullptr);
+    action->trigger();
+    EXPECT_FALSE(window.isVisible());
+}
+
+TEST(MainWindowShortcutTest, KeysWorkWhateverControlHasFocus) {
+    // real key presses through the shortcut map. The focused control must not eat the key:
+    // a focused button would "click" on Space (toggling the animation twice = no change), a list would jump on T
+    MainWindow window;
+    ASSERT_TRUE(showActive(window));
+    Viewport *viewport = findViewport(window);
+    auto *animationButton = window.findChild<QPushButton *>("animationButton");
+    auto *combo = window.findChild<QComboBox *>("textureCombo");
+    auto *slider = window.findChild<QSlider *>("kdSlider");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(animationButton, nullptr);
+    ASSERT_NE(combo, nullptr);
+    ASSERT_NE(slider, nullptr);
+
+    for (QWidget *focus : std::initializer_list<QWidget *>{viewport, animationButton, combo, slider}) {
+        SCOPED_TRACE(focus->objectName().isEmpty() ? "viewport" : focus->objectName().toStdString());
+        focus->setFocus();
+        QCoreApplication::processEvents();
+        const int comboIndex = combo->currentIndex();
+        const int sliderValue = slider->value();
+
+        const bool animating = viewport->isAnimating();
+        QTest::keyClick(focus, Qt::Key_Space);
+        EXPECT_NE(viewport->isAnimating(), animating) << "Space";
+
+        const bool texture = viewport->useTexture();
+        QTest::keyClick(focus, Qt::Key_T);
+        EXPECT_NE(viewport->useTexture(), texture) << "T";
+
+        const bool normalMap = viewport->useNormalMap();
+        QTest::keyClick(focus, Qt::Key_N);
+        EXPECT_NE(viewport->useNormalMap(), normalMap) << "N";
+
+        dragScene(viewport);
+        ASSERT_NE(viewport->rotation().m, Viewport::initialRotation().m);
+        focus->setFocus(); // the drag may have moved the focus to the viewport
+        QTest::keyClick(focus, Qt::Key_R);
+        EXPECT_EQ(viewport->rotation().m, Viewport::initialRotation().m) << "R";
+
+        EXPECT_EQ(combo->currentIndex(), comboIndex) << "the list must not react to the letters";
+        EXPECT_EQ(slider->value(), sliderValue);
+    }
+}
+
+TEST(MainWindowShortcutTest, SceneMenuIsNotCalledView) {
+    // macOS inserts its own items into a menu titled "View", which broke the shortcuts of that menu
+    MainWindow window;
+    QStringList titles;
+    for (QAction *action : window.menuBar()->actions())
+        titles << action->text();
+    EXPECT_FALSE(titles.contains("View")) << titles.join(", ").toStdString();
+    EXPECT_TRUE(titles.contains("Scene"));
+}
+
+TEST(MainWindowShortcutTest, FullScreenHasPlatformKeysAndF11) {
+    MainWindow window;
+    auto *action = window.findChild<QAction *>("fullScreenAction");
+    ASSERT_NE(action, nullptr);
+    const QList<QKeySequence> keys = action->shortcuts();
+    for (const QKeySequence &platformKey : QKeySequence::keyBindings(QKeySequence::FullScreen))
+        EXPECT_TRUE(keys.contains(platformKey)) << platformKey.toString().toStdString();
+    EXPECT_TRUE(keys.contains(QKeySequence(Qt::Key_F11)));
+}
+
+TEST(MainWindowShortcutTest, FullScreenActionTogglesWindowAndFollowsIt) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *action = window.findChild<QAction *>("fullScreenAction");
+    ASSERT_NE(action, nullptr);
+    EXPECT_FALSE(action->isChecked());
+
+    action->trigger();
+    EXPECT_TRUE(window.isFullScreen());
+    EXPECT_TRUE(action->isChecked());
+    action->trigger();
+    EXPECT_FALSE(window.isFullScreen());
+
+    // left full screen by other means (e.g. the green button on macOS): the menu check follows
+    window.showFullScreen();
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(action->isChecked());
+    window.showNormal();
+    QCoreApplication::processEvents();
+    EXPECT_FALSE(action->isChecked());
+}
+
+TEST(MainWindowShortcutTest, ResetRotationAndFullScreenKeysWork) {
+    MainWindow window;
+    ASSERT_TRUE(showActive(window));
+    Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    viewport->setFocus();
+
+    const QPoint from = viewport->rect().center(), to = from + QPoint(50, 30);
+    QMouseEvent press(QEvent::MouseButtonPress, from, viewport->mapToGlobal(from), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &press);
+    QMouseEvent move(QEvent::MouseMove, to, viewport->mapToGlobal(to), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, viewport->mapToGlobal(to), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport, &release);
+    ASSERT_NE(viewport->rotation().m, Viewport::initialRotation().m);
+
+    QTest::keyClick(viewport, Qt::Key_R);
+    EXPECT_EQ(viewport->rotation().m, Viewport::initialRotation().m) << "R";
+
+    QTest::keyClick(viewport, Qt::Key_F11);
+    EXPECT_TRUE(window.isFullScreen()) << "F11";
+    QTest::keyClick(viewport, Qt::Key_F11);
+    EXPECT_FALSE(window.isFullScreen()) << "F11 again";
 }

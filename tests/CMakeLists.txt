@@ -67,7 +67,9 @@ qt_add_resources(ui_tests "test_assets"
         FILES ${BEZIER_TEST_ASSET_FILES}
 )
 target_include_directories(ui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(ui_tests PRIVATE bezier_core Qt6::Widgets GTest::gtest)
+# Qt Test only for QTest::keyClick (keyboard shortcuts go through the shortcut map, not sendEvent)
+find_package(Qt6 REQUIRED COMPONENTS Test)
+target_link_libraries(ui_tests PRIVATE bezier_core Qt6::Widgets Qt6::Test GTest::gtest)
 target_compile_definitions(ui_tests PRIVATE BEZIER_ASSETS_DIR="${PROJECT_SOURCE_DIR}/src/assets")
 bezier_set_warnings(ui_tests)
 
