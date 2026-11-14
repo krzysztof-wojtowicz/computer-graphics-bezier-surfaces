@@ -48,12 +48,15 @@ add_executable(ui_tests
         ui/main.cpp
         ui/ViewportTest.cpp
         ui/MainWindowTest.cpp
+        ui/ImageLoaderTest.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.h
         ${PROJECT_SOURCE_DIR}/src/ui/MainWindow.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/MainWindow.h
         ${PROJECT_SOURCE_DIR}/src/ui/SurfaceLoader.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/SurfaceLoader.h
+        ${PROJECT_SOURCE_DIR}/src/ui/ImageLoader.cpp
+        ${PROJECT_SOURCE_DIR}/src/ui/ImageLoader.h
 )
 # MainWindow loads :/assets/surfaces.txt at startup, like the program
 qt_add_resources(ui_tests "test_assets"
