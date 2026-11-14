@@ -172,6 +172,20 @@ void Viewport::setTexture(Texture texture) {
     update();
 }
 
+void Viewport::setUseNormalMap(const bool use) {
+    m_useNormalMap = use;
+
+    render();
+    update();
+}
+
+void Viewport::setNormalMap(Texture normalMap) {
+    m_normalMap = std::move(normalMap);
+
+    render();
+    update();
+}
+
 void Viewport::resetLightPath() {
     m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, lightZ());
     m_draggedPoint = -1; // a reset during a drag must not keep moving a point of the old curve
@@ -490,15 +504,22 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
 
                 if (m_zbuffer.testAndSet(x, y, z)) {
                     // interpolate N
-                    const auto N = interpolate(w, vertices[v1].after.N, vertices[v2].after.N, vertices[v3].after.N);
+                    Vec3 N = interpolate(w, vertices[v1].after.N, vertices[v2].after.N, vertices[v3].after.N);
                     const auto P = interpolate(w, vertices[v1].after.P, vertices[v2].after.P, vertices[v3].after.P);
 
-                    // object color: the surface color, or the texture at (u, v) of this pixel
+                    // object color: the surface color, or the texture at (u, v) of this pixel;
+                    // normal: from the surface, or bent by the normal map at (u, v)
                     ShadingColor io = sColor;
-                    if (m_useTexture) {
+                    if (m_useTexture || m_useNormalMap) {
                         const float u = interpolate(w, vertices[v1].u, vertices[v2].u, vertices[v3].u);
                         const float v = interpolate(w, vertices[v1].v, vertices[v2].v, vertices[v3].v);
-                        io = m_texture.sample(u, v);
+                        if (m_useTexture)
+                            io = m_texture.sample(u, v);
+                        if (m_useNormalMap) {
+                            const Vec3 Pu = interpolate(w, vertices[v1].after.Pu, vertices[v2].after.Pu, vertices[v3].after.Pu);
+                            const Vec3 Pv = interpolate(w, vertices[v1].after.Pv, vertices[v2].after.Pv, vertices[v3].after.Pv);
+                            N = perturbNormal(Pu, Pv, N, colorToNormal(m_normalMap.sample(u, v)));
+                        }
                     }
 
                     const auto [red, green, blue] = m_shader.calculateColor(io, N, P);

@@ -13,6 +13,7 @@
 #include "geometry/BezierCurve.h"
 #include "math/TestUtils.h"
 #include "renderer/Texture.h"
+#include "renderer/NormalMapping.h"
 
 #include <QColor>
 #include <QCoreApplication>
@@ -1948,6 +1949,229 @@ TEST(ViewportTextureTest, SwitchingTextureOffRestoresImage) {
     viewport.setUseTexture(true);
     ASSERT_NE(grabImage(viewport), before);
     viewport.setUseTexture(false);
+    EXPECT_EQ(grabImage(viewport), before);
+}
+
+// ---------- 8: normal map ----------
+
+namespace {
+/// 1x1 normal map storing direction n (in the surface frame: x along Pu, y along Pv, z along N)
+Texture uniformNormalMap(const Vec3 &n) {
+    const Vec3 d = normalized(n);
+    const auto byte = [](const float c) { return static_cast<std::uint8_t>(std::lround((c + 1.0f) * 127.5f)); };
+    return {1, 1, {byte(d.x), byte(d.y), byte(d.z)}};
+}
+
+/// 2x1 normal map: left half (u < 0.5) tilted towards +Pu, right half towards -Pu, by 45 degrees
+Texture ridgeNormalMap() {
+    const Texture left = uniformNormalMap({1.0f, 0.0f, 1.0f});
+    const Texture right = uniformNormalMap({-1.0f, 0.0f, 1.0f});
+    const auto bytes = [](const Texture &t) {
+        const ShadingColor c = t.texel(0, 0);
+        return std::array{static_cast<std::uint8_t>(std::lround(c.r * 255.0f)),
+                          static_cast<std::uint8_t>(std::lround(c.g * 255.0f)),
+                          static_cast<std::uint8_t>(std::lround(c.b * 255.0f))};
+    };
+    const auto l = bytes(left), r = bytes(right);
+    return {2, 1, {l[0], l[1], l[2], r[0], r[1], r[2]}};
+}
+
+/// Expected red channel of the diffuse-only fill (showOnlyDiffuseFill) of surface 0 at (u, v):
+/// the normal is bent exactly like Viewport does it, from the positions after rotation
+float expectedDiffuseRed(const Viewport &viewport, const BezierSurface &surface, const float u, const float v,
+                         const bool withMap, const float ioRed = -1.0f) {
+    const SurfacePoint sp = surface.evaluate(u, v);
+    const Mat3 &R = viewport.rotation();
+    Vec3 N = normalized(R * sp.N);
+    if (withMap)
+        N = perturbNormal(R * sp.Pu, R * sp.Pv, N, colorToNormal(viewport.normalMap().sample(u, v)));
+    if (N.z < 0) N = -N; // lit from both sides
+    const Vec3 L = normalized(viewport.lightPosition() - R * sp.P);
+    const float io = ioRed >= 0.0f ? ioRed : static_cast<float>(viewport.surfaceColor(0).red()) / 255.0f;
+    return 255.0f * viewport.kd() * io * std::max(0.0f, dot(N, L));
+}
+
+int redAt(const Viewport &viewport, const QImage &img, const BezierSurface &surface, const float u, const float v) {
+    return colorAt(img, screenPoint(viewport, surface.evaluate(u, v).P)).red();
+}
+
+/// The same square seen from below: rows of control points reversed, so Pu and N point the other way
+BezierSurface flipped(const BezierSurface &s) {
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = s.controlPoint(3 - i, j);
+    return BezierSurface(g);
+}
+
+constexpr std::array<std::pair<float, float>, 5> kMapSamples = {{{0.2f, 0.3f}, {0.5f, 0.5f}, {0.8f, 0.2f}, {0.35f, 0.85f}, {0.7f, 0.65f}}};
+} // namespace
+
+TEST(ViewportNormalMapTest, OffByDefaultWithFlatMap) {
+    const Viewport viewport;
+    EXPECT_FALSE(viewport.useNormalMap());
+    EXPECT_EQ(viewport.normalMap().width(), 1);
+    EXPECT_EQ(viewport.normalMap().height(), 1);
+    EXPECT_VEC3_NEAR(colorToNormal(viewport.normalMap().texel(0, 0)), (Vec3{0.0f, 0.0f, 1.0f}), 0.01f);
+}
+
+TEST(ViewportNormalMapTest, SettersStoreValuesAndRedraw) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    const QPointF p = screenPoint(viewport, surface.evaluate(0.3f, 0.6f).P);
+    const QColor initial = colorAt(showViewport(viewport, kMeshImageSize), p);
+
+    viewport.setNormalMap(uniformNormalMap({0.6f, 0.0f, 0.8f}));
+    EXPECT_GT(colorToNormal(viewport.normalMap().texel(0, 0)).x, 0.5f);
+    EXPECT_EQ(colorAt(grabImage(viewport), p), initial) << "map set but not used yet";
+
+    viewport.setUseNormalMap(true);
+    EXPECT_TRUE(viewport.useNormalMap());
+    const QColor bent = colorAt(grabImage(viewport), p);
+    EXPECT_NE(bent, initial) << "setUseNormalMap";
+
+    viewport.setNormalMap(uniformNormalMap({-0.6f, 0.0f, 0.8f}));
+    EXPECT_NE(colorAt(grabImage(viewport), p), bent) << "setNormalMap";
+}
+
+TEST(ViewportNormalMapTest, FlatMapKeepsImageAlmostUnchanged) {
+    // the default map is RGB(128, 128, 255) = [0.004, 0.004, 1]: only rounding-size differences.
+    // Exception: single pixels on the silhouette (N.z ~ 0), where the tiny tilt flips the sign of N.z and
+    // two-sided lighting turns the normal around (seen: 9 of ~110000 drawn pixels)
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    showOnlyDiffuseFill(viewport);
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    viewport.setUseNormalMap(true);
+    const QImage after = grabImage(viewport);
+    const std::vector<QPoint> drawn = drawnPixels(before);
+    ASSERT_GT(drawn.size(), 10000u);
+    int changed = 0;
+    for (const QPoint &p : drawn) {
+        const QColor a = before.pixelColor(p), b = after.pixelColor(p);
+        if (std::max({std::abs(a.red() - b.red()), std::abs(a.green() - b.green()), std::abs(a.blue() - b.blue())}) > 3)
+            ++changed;
+    }
+    EXPECT_LT(changed, static_cast<int>(drawn.size() / 1000)) << changed << " pixels changed by more than 3";
+}
+
+TEST(ViewportNormalMapTest, BentNormalGivesLambertBrightness) {
+    // constant tilted map on a flat square: brightness = cos(N', L) with N' = [Pu, Pv, N] * N_map
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(true);
+    const QImage img = showViewport(viewport, kMeshImageSize);
+
+    float largestChange = 0.0f;
+    for (const auto &[u, v] : kMapSamples) {
+        const float expected = expectedDiffuseRed(viewport, surface, u, v, true);
+        EXPECT_NEAR(static_cast<float>(redAt(viewport, img, surface, u, v)), expected, 2.0f) << "u = " << u << ", v = " << v;
+        largestChange = std::max(largestChange, std::abs(expected - expectedDiffuseRed(viewport, surface, u, v, false)));
+    }
+    EXPECT_GT(largestChange, 20.0f) << "the map must visibly change the shading for this test to mean anything";
+}
+
+TEST(ViewportNormalMapTest, ReliefChangesWithLightPosition) {
+    // ridge: the half tilted towards the light is brighter; half a lap later the light is on the other side
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    viewport.setNormalMap(ridgeNormalMap());
+    viewport.setUseNormalMap(true);
+    showViewport(viewport, kMeshImageSize);
+
+    // start where the light is far along x, so the two halves differ clearly
+    const float lap = static_cast<float>(viewport.lightPath().segments()) / Viewport::kLightSpeed;
+    float bestX = 0.0f, bestStep = 0.0f;
+    for (int i = 0; i < 16; ++i) {
+        const float x = std::abs(viewport.lightPosition().x);
+        if (x > bestX) bestX = x, bestStep = static_cast<float>(i) * lap / 16.0f;
+        viewport.stepAnimation(lap / 16.0f);
+    }
+    viewport.stepAnimation(bestStep); // after the full lap above: back at the start, then to the best place
+
+    std::array<bool, 2> leftBrighter{};
+    for (int k = 0; k < 2; ++k) {
+        SCOPED_TRACE(k == 0 ? "first light position" : "half a lap later");
+        const QImage img = grabImage(viewport);
+        const int left = redAt(viewport, img, surface, 0.25f, 0.5f);
+        const int right = redAt(viewport, img, surface, 0.75f, 0.5f);
+        EXPECT_NEAR(static_cast<float>(left), expectedDiffuseRed(viewport, surface, 0.25f, 0.5f, true), 2.0f);
+        EXPECT_NEAR(static_cast<float>(right), expectedDiffuseRed(viewport, surface, 0.75f, 0.5f, true), 2.0f);
+        EXPECT_GT(std::abs(left - right), 20) << "relief not visible";
+        leftBrighter[k] = left > right;
+        viewport.stepAnimation(0.5f * lap);
+    }
+    EXPECT_NE(leftBrighter[0], leftBrighter[1]) << "the lit side of the relief must follow the light";
+}
+
+TEST(ViewportNormalMapTest, ReliefStaysOnSurfaceWhenRotated) {
+    // the map is in the surface's frame: after a drag the brightness follows the rotated Pu, Pv, N
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(true);
+    showViewport(viewport, kMeshImageSize);
+    drag(viewport, QPoint(300, 300), QPoint(320, 285));
+    const QImage img = grabImage(viewport);
+    for (const auto &[u, v] : kMapSamples)
+        EXPECT_NEAR(static_cast<float>(redAt(viewport, img, surface, u, v)), expectedDiffuseRed(viewport, surface, u, v, true), 2.0f)
+            << "u = " << u << ", v = " << v;
+}
+
+TEST(ViewportNormalMapTest, UnderSideIsLitWithBentNormal) {
+    // seen from below N.z < 0: the bent normal is turned to the viewer like the plain one (two-sided lighting)
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = flipped(textureSquare(viewport));
+    viewport.setSurfaces({surface});
+    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(true);
+    const QImage img = showViewport(viewport, kMeshImageSize);
+    ASSERT_LT((viewport.rotation() * surface.evaluate(0.5f, 0.5f).N).z, 0.0f) << "test needs the under side";
+    for (const auto &[u, v] : kMapSamples) {
+        const float expected = expectedDiffuseRed(viewport, surface, u, v, true);
+        EXPECT_GT(expected, 30.0f);
+        EXPECT_NEAR(static_cast<float>(redAt(viewport, img, surface, u, v)), expected, 2.0f) << "u = " << u << ", v = " << v;
+    }
+}
+
+TEST(ViewportNormalMapTest, WorksTogetherWithTexture) {
+    // texture sets IO, the map bends N: both at once
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    viewport.setTexture(solidTexture(QColor(255, 0, 0)));
+    viewport.setUseTexture(true);
+    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(true);
+    const QImage img = showViewport(viewport, kMeshImageSize);
+    for (const auto &[u, v] : kMapSamples) {
+        const QColor c = colorAt(img, screenPoint(viewport, surface.evaluate(u, v).P));
+        EXPECT_EQ(c.green(), 0);
+        EXPECT_EQ(c.blue(), 0);
+        EXPECT_NEAR(static_cast<float>(c.red()), expectedDiffuseRed(viewport, surface, u, v, true, 1.0f), 2.0f)
+            << "u = " << u << ", v = " << v;
+    }
+}
+
+TEST(ViewportNormalMapTest, SwitchingNormalMapOffRestoresImage) {
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    viewport.setNormalMap(ridgeNormalMap());
+    viewport.setUseNormalMap(true);
+    ASSERT_NE(grabImage(viewport), before);
+    viewport.setUseNormalMap(false);
     EXPECT_EQ(grabImage(viewport), before);
 }
 
