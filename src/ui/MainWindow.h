@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSize>
 #include <QString>
 
 #include <array>
@@ -18,6 +19,10 @@
 
 class MainWindow : public QMainWindow {
 public:
+    static constexpr int kPanelWidth = 340;
+    /// Size of the color swatch on the surface color buttons (the buttons have no text)
+    static constexpr QSize kSwatchSize{48, 16};
+
     explicit MainWindow(QWidget *parent = nullptr);
 
     /// Loads an image file (or a resource ":/...") as the texture and switches the object color to it. <br>

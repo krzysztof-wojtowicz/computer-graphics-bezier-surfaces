@@ -17,6 +17,7 @@
 #include <QTest>
 #include <QAction>
 #include <QComboBox>
+#include <QGroupBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
@@ -302,8 +303,10 @@ TEST(MainWindowLightingTest, CancellingDialogKeepsLightColor) {
 
 namespace {
 /// Color of the swatch icon on a color button
+/// Color in the middle of the button's icon, read at the icon's own size (swatches are not square)
 QColor swatchColor(const QPushButton &button) {
-    return button.icon().pixmap(16, 16).toImage().pixelColor(8, 8);
+    const QSize size = button.icon().availableSizes().value(0, QSize(16, 16));
+    return button.icon().pixmap(size).toImage().pixelColor(size.width() / 2, size.height() / 2);
 }
 } // namespace
 
@@ -456,7 +459,8 @@ TEST(MainWindowColorTest, OneButtonPerColorShowingIt) {
         SCOPED_TRACE(i);
         QPushButton *button = findSurfaceColorButton(window, i);
         ASSERT_NE(button, nullptr);
-        EXPECT_EQ(button->text(), QString("Color %1...").arg(i + 1));
+        EXPECT_TRUE(button->text().isEmpty()) << "only a swatch, no text";
+        EXPECT_EQ(button->toolTip(), QString("Surface color %1...").arg(i + 1));
         EXPECT_EQ(swatchColor(*button), viewport->surfaceColor(i));
     }
     EXPECT_EQ(findSurfaceColorButton(window, Viewport::kColorCount), nullptr) << "exactly kColorCount buttons";
@@ -733,7 +737,8 @@ TEST(MainWindowTextureTest, LoadButtonsAndMenuActionsExist) {
     for (const ImageControls &c : findImageControls(window)) {
         SCOPED_TRACE(c.kind);
         assertControlsFound(c);
-        EXPECT_EQ(c.loadButton->text(), QString("Load %1...").arg(c.kind));
+        EXPECT_EQ(c.loadButton->text(), "Load..."); // next to the list, which says what is loaded
+        EXPECT_EQ(c.loadButton->toolTip(), QString("Load %1 from a file").arg(c.kind));
         EXPECT_EQ(c.loadAction->text(), QString("Load %1...").arg(c.kind));
     }
 }
@@ -1069,4 +1074,131 @@ TEST(MainWindowShortcutTest, ResetRotationAndFullScreenKeysWork) {
     EXPECT_TRUE(window.isFullScreen()) << "F11";
     QTest::keyClick(viewport, Qt::Key_F11);
     EXPECT_FALSE(window.isFullScreen()) << "F11 again";
+}
+
+// ---------- side panel layout ----------
+
+namespace {
+/// Geometry of a widget in window coordinates (after the window was shown and laid out)
+QRect inWindow(const MainWindow &window, const QWidget *w) {
+    return {w->mapTo(&window, QPoint(0, 0)), w->size()};
+}
+
+bool sameRow(const MainWindow &window, const QWidget *a, const QWidget *b) {
+    return std::abs(inWindow(window, a).center().y() - inWindow(window, b).center().y()) <= 3;
+}
+} // namespace
+
+TEST(MainWindowLayoutTest, PanelIsWider) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *slider = window.findChild<QSlider *>("resolutionSlider");
+    ASSERT_NE(slider, nullptr);
+    QWidget *panel = slider->parentWidget()->parentWidget(); // slider -> group box -> panel
+    EXPECT_EQ(panel->width(), MainWindow::kPanelWidth);
+    EXPECT_GT(MainWindow::kPanelWidth, 280);
+}
+
+TEST(MainWindowLayoutTest, DisplayCheckBoxesInTwoColumns) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    QSet<int> columns;
+    for (const QString &text : {"Bezier polygon", "Triangle mesh", "Mesh points", "Triangle fill", "Light path"}) {
+        QCheckBox *box = findCheckBox(window, text);
+        ASSERT_NE(box, nullptr) << text.toStdString();
+        columns.insert(inWindow(window, box).left());
+    }
+    EXPECT_EQ(columns.size(), 2);
+    EXPECT_TRUE(sameRow(window, findCheckBox(window, "Bezier polygon"), findCheckBox(window, "Triangle mesh")));
+}
+
+TEST(MainWindowLayoutTest, SurfaceColorSwatchesInOneRow) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    QPushButton *first = findSurfaceColorButton(window, 0);
+    ASSERT_NE(first, nullptr);
+    for (int i = 1; i < Viewport::kColorCount; ++i) {
+        QPushButton *button = findSurfaceColorButton(window, i);
+        ASSERT_NE(button, nullptr);
+        EXPECT_TRUE(sameRow(window, first, button)) << "button " << i;
+        EXPECT_GT(inWindow(window, button).left(), inWindow(window, findSurfaceColorButton(window, i - 1)).left());
+    }
+}
+
+TEST(MainWindowLayoutTest, SurfaceControlsShareRows) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
+    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    ASSERT_NE(solid, nullptr);
+    ASSERT_NE(texture, nullptr);
+    EXPECT_TRUE(sameRow(window, solid, texture));
+    for (const ImageControls &c : findImageControls(window)) {
+        SCOPED_TRACE(c.kind);
+        assertControlsFound(c);
+        EXPECT_TRUE(sameRow(window, c.combo, c.loadButton));
+        EXPECT_GT(inWindow(window, c.loadButton).left(), inWindow(window, c.combo).right()) << "Load... right of the list";
+    }
+}
+
+TEST(MainWindowLayoutTest, LightColorAndAnimationButtonsShareRowHalfEach) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *color = window.findChild<QPushButton *>("lightColorButton");
+    auto *animation = window.findChild<QPushButton *>("animationButton");
+    ASSERT_NE(color, nullptr);
+    ASSERT_NE(animation, nullptr);
+    EXPECT_TRUE(sameRow(window, color, animation));
+    EXPECT_NEAR(color->width(), animation->width(), 2);
+}
+
+// ---------- surfaces group: visibility switches ----------
+
+TEST(MainWindowSurfacesTest, GroupsAreRenamed) {
+    MainWindow window;
+    QStringList titles;
+    for (QGroupBox *box : window.findChildren<QGroupBox *>())
+        titles << box->title();
+    EXPECT_TRUE(titles.contains("Surfaces")) << titles.join(", ").toStdString();
+    EXPECT_TRUE(titles.contains("Surface texture")) << titles.join(", ").toStdString();
+    EXPECT_FALSE(titles.contains("Surface colors"));
+}
+
+TEST(MainWindowSurfacesTest, EveryCheckBoxStartsCheckedAndTogglesOnlyItsGroup) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        auto *box = window.findChild<QCheckBox *>(QString("surfaceVisibleCheck%1").arg(i + 1));
+        ASSERT_NE(box, nullptr);
+        EXPECT_EQ(box->text(), QString("Surface %1").arg(i + 1));
+        EXPECT_TRUE(box->isChecked());
+        box->click();
+        for (int j = 0; j < Viewport::kColorCount; ++j)
+            EXPECT_EQ(viewport->surfaceVisible(j), j != i) << "group " << j;
+        box->click();
+        EXPECT_TRUE(viewport->surfaceVisible(i));
+    }
+}
+
+TEST(MainWindowSurfacesTest, CheckBoxesInOneRowAboveTheirSwatches) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        auto *box = window.findChild<QCheckBox *>(QString("surfaceVisibleCheck%1").arg(i + 1));
+        QPushButton *swatch = findSurfaceColorButton(window, i);
+        ASSERT_NE(box, nullptr);
+        ASSERT_NE(swatch, nullptr);
+        EXPECT_TRUE(sameRow(window, box, window.findChild<QCheckBox *>("surfaceVisibleCheck1")));
+        EXPECT_LT(inWindow(window, box).bottom(), inWindow(window, swatch).top()) << "check box above its swatch";
+        EXPECT_NEAR(inWindow(window, box).left(), inWindow(window, swatch).left(), 3) << "same column";
+    }
 }
