@@ -130,3 +130,33 @@ TEST(NormalMappingTest, GrayColorGivesZeroVectorWithoutNan) {
     EXPECT_FALSE(std::isnan(n.x) || std::isnan(n.y) || std::isnan(n.z));
     EXPECT_VEC3_EQ(n, (Vec3{0.0f, 0.0f, 0.0f}));
 }
+
+// ---------- normal map colors ----------
+
+TEST(NormalMappingTest, MapGreenPointsUpTheImageAgainstPv) {
+    // Pv points down the image (v grows with the row), the map's +y points up the image
+    EXPECT_VEC3_NEAR(normalFromMap({0.5f, 1.0f, 0.5f}), (Vec3{0.0f, -1.0f, 0.0f}), 0.01f);
+    EXPECT_VEC3_NEAR(normalFromMap({0.5f, 0.0f, 0.5f}), (Vec3{0.0f, 1.0f, 0.0f}), 0.01f);
+}
+
+TEST(NormalMappingTest, MapRedAndBlueKeepTheirDirection) {
+    EXPECT_VEC3_NEAR(normalFromMap({1.0f, 0.5f, 0.5f}), (Vec3{1.0f, 0.0f, 0.0f}), 0.01f);
+    EXPECT_VEC3_NEAR(normalFromMap({0.0f, 0.5f, 0.5f}), (Vec3{-1.0f, 0.0f, 0.0f}), 0.01f);
+    EXPECT_VEC3_NEAR(normalFromMap({0.5f, 0.5f, 1.0f}), (Vec3{0.0f, 0.0f, 1.0f}), 0.01f);
+}
+
+TEST(NormalMappingTest, BumpMapTiltsNormalsOutwardOnBothAxes) {
+    // a bump in OpenGL convention: right of centre red > 0.5, above centre (smaller v) green > 0.5.
+    // On a flat patch with Pu = x, Pv = y, the bent normal must point away from the centre on both axes
+    const Vec3 Pu{1, 0, 0}, Pv{0, 1, 0}, N{0, 0, 1};
+    const Vec3 right = perturbNormal(Pu, Pv, N, normalFromMap({0.8f, 0.5f, 0.9f}));
+    const Vec3 above = perturbNormal(Pu, Pv, N, normalFromMap({0.5f, 0.8f, 0.9f}));
+    EXPECT_GT(right.x, 0.2f) << "right of centre the normal leans right (+u)";
+    EXPECT_LT(above.y, -0.2f) << "above centre (smaller v) the normal leans towards smaller v";
+}
+
+TEST(NormalMappingTest, NormalFromMapIsConstexpr) {
+    constexpr Vec3 n = normalFromMap({0.5f, 1.0f, 0.5f});
+    static_assert(n.y == -1.0f);
+    SUCCEED();
+}

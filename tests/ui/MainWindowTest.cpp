@@ -3,12 +3,22 @@
 
 #include "ui/MainWindow.h"
 #include "ui/Viewport.h"
+#include "ui/ImageLoader.h"
 
 #include "geometry/BezierCurve.h"
 #include "geometry/Mesh.h"
 #include "renderer/Projection.h"
 
+#include <QAbstractButton>
 #include <QAction>
+#include <QComboBox>
+#include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QMessageBox>
+#include <QRadioButton>
+#include <QStringList>
+#include <QTemporaryDir>
 #include <QApplication>
 #include <QCheckBox>
 #include <QPushButton>
@@ -25,6 +35,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstddef>
+#include <utility>
 #include <cmath>
 #include <tuple>
 
@@ -479,4 +491,261 @@ TEST(MainWindowColorTest, CancelKeepsColorAndDialogStartsFromLastChoice) {
     answerColorDialog([button] { button->click(); }, QColor(1, 2, 3), QColor(200, 0, 0), false, "Surface color 2");
     EXPECT_EQ(viewport->surfaceColor(1), QColor(1, 2, 3));
     EXPECT_EQ(swatchColor(*button), QColor(1, 2, 3));
+}
+
+// ---------- 8: texture and normal map ----------
+
+namespace {
+/// Texture and normal map have the same controls; the tests run once for each
+struct ImageControls {
+    const char *kind;
+    QAbstractButton *enable;   // texture radio / normal map check box
+    QComboBox *combo;
+    QPushButton *loadButton;
+    QAction *loadAction;
+    bool (MainWindow::*loadFrom)(const QString &);
+    bool (Viewport::*inUse)() const;
+    const Texture &(Viewport::*image)() const;
+    QStringList builtInNames;
+    QStringList builtInPaths;
+};
+
+template<std::size_t N>
+std::pair<QStringList, QStringList> namesAndPaths(const std::array<BuiltInImage, N> &images) {
+    QStringList names, paths;
+    for (const auto &image : images) {
+        names << QString::fromUtf8(image.name);
+        paths << QString::fromUtf8(image.path);
+    }
+    return {names, paths};
+}
+
+std::array<ImageControls, 2> findImageControls(const MainWindow &window) {
+    const auto [textureNames, texturePaths] = namesAndPaths(kBuiltInTextures);
+    const auto [mapNames, mapPaths] = namesAndPaths(kBuiltInNormalMaps);
+    return {{
+        {"texture", window.findChild<QRadioButton *>("textureRadio"), window.findChild<QComboBox *>("textureCombo"),
+         window.findChild<QPushButton *>("loadTextureButton"), window.findChild<QAction *>("loadTextureAction"),
+         &MainWindow::loadTextureFrom, &Viewport::useTexture, &Viewport::texture, textureNames, texturePaths},
+        {"normal map", window.findChild<QCheckBox *>("normalMapCheck"), window.findChild<QComboBox *>("normalMapCombo"),
+         window.findChild<QPushButton *>("loadNormalMapButton"), window.findChild<QAction *>("loadNormalMapAction"),
+         &MainWindow::loadNormalMapFrom, &Viewport::useNormalMap, &Viewport::normalMap, mapNames, mapPaths},
+    }};
+}
+
+void assertControlsFound(const ImageControls &c) {
+    ASSERT_NE(c.enable, nullptr) << c.kind;
+    ASSERT_NE(c.combo, nullptr) << c.kind;
+    ASSERT_NE(c.loadButton, nullptr) << c.kind;
+    ASSERT_NE(c.loadAction, nullptr) << c.kind;
+}
+
+/// Same size and every texel equal
+bool sameTexture(const Texture &a, const Texture &b) {
+    if (a.width() != b.width() || a.height() != b.height()) return false;
+    for (int y = 0; y < a.height(); ++y)
+        for (int x = 0; x < a.width(); ++x) {
+            const ShadingColor p = a.texel(x, y), q = b.texel(x, y);
+            if (p.r != q.r || p.g != q.g || p.b != q.b) return false;
+        }
+    return true;
+}
+
+Texture expectedImage(const QString &path) {
+    TextureLoadResult result = loadTexture(path);
+    EXPECT_TRUE(result.texture.has_value()) << result.error.toStdString();
+    return result.texture.value_or(Texture());
+}
+
+/// Accepts the warning shown by `open`, checks that it mentions `mention`
+template<class OpenFn>
+void answerWarning(OpenFn &&open, const QString &mention) {
+    bool answered = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        ASSERT_NE(box, nullptr);
+        EXPECT_TRUE(box->text().contains(mention)) << box->text().toStdString();
+        box->accept();
+        answered = true;
+    });
+    open();
+    EXPECT_TRUE(answered) << "no warning was shown";
+}
+
+/// 3x2 PNG in a temporary directory, different from every built-in image
+QString saveTestImage(const QTemporaryDir &dir, const QString &name) {
+    QImage image(3, 2, QImage::Format_RGB32);
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 3; ++x)
+            image.setPixelColor(x, y, QColor(40 * x, 100 + 50 * y, 200));
+    const QString path = dir.filePath(name);
+    EXPECT_TRUE(image.save(path));
+    return path;
+}
+} // namespace
+
+TEST(MainWindowTextureTest, StartsWithSolidColorsAndDefaultImagesLoaded) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
+    ASSERT_NE(solid, nullptr);
+    EXPECT_TRUE(solid->isChecked());
+    for (const ImageControls &c : findImageControls(window)) {
+        SCOPED_TRACE(c.kind);
+        assertControlsFound(c);
+        EXPECT_FALSE(c.enable->isChecked());
+        EXPECT_FALSE((viewport->*c.inUse)());
+        // the list holds the built-in images, the first (default) one is selected and already in the viewport
+        ASSERT_EQ(c.combo->count(), c.builtInNames.size());
+        for (int i = 0; i < c.combo->count(); ++i) {
+            EXPECT_EQ(c.combo->itemText(i), c.builtInNames[i]);
+            EXPECT_EQ(c.combo->itemData(i).toString(), c.builtInPaths[i]);
+        }
+        EXPECT_EQ(c.combo->currentIndex(), 0);
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(c.builtInPaths[0])));
+    }
+}
+
+TEST(MainWindowTextureTest, RadioButtonsSwitchObjectColorSource) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
+    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(solid, nullptr);
+    ASSERT_NE(texture, nullptr);
+
+    texture->click();
+    EXPECT_TRUE(texture->isChecked());
+    EXPECT_FALSE(solid->isChecked()) << "the radio buttons must exclude each other";
+    EXPECT_TRUE(viewport->useTexture());
+
+    solid->click();
+    EXPECT_FALSE(texture->isChecked());
+    EXPECT_FALSE(viewport->useTexture());
+}
+
+TEST(MainWindowTextureTest, NormalMapCheckBoxIsIndependentOfObjectColor) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *check = window.findChild<QCheckBox *>("normalMapCheck");
+    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(check, nullptr);
+    ASSERT_NE(texture, nullptr);
+
+    check->click();
+    EXPECT_TRUE(viewport->useNormalMap());
+    EXPECT_FALSE(viewport->useTexture());
+    texture->click();
+    EXPECT_TRUE(viewport->useNormalMap()) << "choosing the texture keeps the normal map";
+    check->click();
+    EXPECT_FALSE(viewport->useNormalMap());
+    EXPECT_TRUE(viewport->useTexture()) << "switching the normal map off keeps the texture";
+}
+
+TEST(MainWindowTextureTest, ChoosingFromListLoadsImageAndSwitchesItOn) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (const ImageControls &c : findImageControls(window)) {
+        SCOPED_TRACE(c.kind);
+        assertControlsFound(c);
+        for (int i = c.combo->count() - 1; i >= 0; --i) { // backwards: index 0 is selected already
+            c.combo->setCurrentIndex(i);
+            EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(c.builtInPaths[i]))) << "item " << i;
+            EXPECT_TRUE(c.enable->isChecked());
+            EXPECT_TRUE((viewport->*c.inUse)());
+            EXPECT_EQ(c.combo->count(), c.builtInNames.size()) << "a built-in item must not be added again";
+        }
+    }
+}
+
+TEST(MainWindowTextureTest, LoadingFileUsesItAndAddsItToList) {
+    const QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (const ImageControls &c : findImageControls(window)) {
+        SCOPED_TRACE(c.kind);
+        assertControlsFound(c);
+        const QString path = saveTestImage(dir, QString(c.kind).replace(' ', '_') + ".png");
+        const int builtIn = static_cast<int>(c.combo->count());
+
+        EXPECT_TRUE((window.*c.loadFrom)(path));
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(path)));
+        EXPECT_TRUE(c.enable->isChecked());
+        EXPECT_TRUE((viewport->*c.inUse)());
+        ASSERT_EQ(c.combo->count(), builtIn + 1);
+        EXPECT_EQ(c.combo->currentIndex(), builtIn);
+        EXPECT_EQ(c.combo->currentText(), QFileInfo(path).fileName());
+
+        // back to a built-in image and then to the file again from the list
+        c.combo->setCurrentIndex(0);
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(c.builtInPaths[0])));
+        c.combo->setCurrentIndex(builtIn);
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(path)));
+
+        // loading the same file again selects its item instead of adding another one
+        EXPECT_TRUE((window.*c.loadFrom)(path));
+        EXPECT_EQ(c.combo->count(), builtIn + 1);
+    }
+}
+
+TEST(MainWindowTextureTest, FailedLoadShowsWarningAndChangesNothing) {
+    const QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString notImage = dir.filePath("not_an_image.png");
+    {
+        QFile file(notImage);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        file.write("text");
+    }
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    for (const ImageControls &c : findImageControls(window)) {
+        SCOPED_TRACE(c.kind);
+        assertControlsFound(c);
+        c.combo->setCurrentIndex(1); // something else than the start, switched on
+        const Texture before = (viewport->*c.image)();
+        for (const QString &path : {notImage, dir.filePath("missing.png")}) {
+            bool loaded = true;
+            answerWarning([&] { loaded = (window.*c.loadFrom)(path); }, path);
+            EXPECT_FALSE(loaded) << path.toStdString();
+            EXPECT_TRUE(sameTexture((viewport->*c.image)(), before));
+            EXPECT_EQ(c.combo->count(), c.builtInNames.size());
+            EXPECT_EQ(c.combo->currentIndex(), 1);
+            EXPECT_TRUE((viewport->*c.inUse)());
+        }
+    }
+}
+
+TEST(MainWindowTextureTest, LoadButtonsAndMenuActionsExist) {
+    MainWindow window;
+    for (const ImageControls &c : findImageControls(window)) {
+        SCOPED_TRACE(c.kind);
+        assertControlsFound(c);
+        EXPECT_EQ(c.loadButton->text(), QString("Load %1...").arg(c.kind));
+        EXPECT_EQ(c.loadAction->text(), QString("Load %1...").arg(c.kind));
+    }
+}
+
+TEST(MainWindowTextureTest, TextureStaysChosenWhenSwitchingToSolidColorAndBack) {
+    MainWindow window;
+    const Viewport *viewport = findViewport(window);
+    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
+    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    auto *combo = window.findChild<QComboBox *>("textureCombo");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(solid, nullptr);
+    ASSERT_NE(texture, nullptr);
+    ASSERT_NE(combo, nullptr);
+    combo->setCurrentIndex(1);
+    solid->click();
+    texture->click();
+    EXPECT_EQ(combo->currentIndex(), 1);
+    EXPECT_TRUE(sameTexture(viewport->texture(), expectedImage(QString::fromUtf8(kBuiltInTextures[1].path))));
 }

@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/SurfaceLoader.h"
+#include "ui/ImageLoader.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -16,6 +17,12 @@
 #include <QIcon>
 #include <QPixmap>
 #include <QPushButton>
+#include <QComboBox>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QRadioButton>
+#include <QSignalBlocker>
+#include <QVariant>
 
 #include <cmath>
 #include <utility>
@@ -81,6 +88,54 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         updateSurfaceColorButton(i);
     }
 
+    // object color IO (surface colors or a texture) and the normal map, independent of each other
+    auto *surfaceGroup = new QGroupBox("Surface", panel);
+    auto *surfaceLayout = new QVBoxLayout(surfaceGroup);
+    auto *solidColorRadio = new QRadioButton("Solid color", surfaceGroup);
+    solidColorRadio->setObjectName("solidColorRadio");
+    m_textureRadio = new QRadioButton("Texture", surfaceGroup);
+    m_textureRadio->setObjectName("textureRadio"); // same parent: the two radio buttons exclude each other
+    (m_viewport->useTexture() ? m_textureRadio : solidColorRadio)->setChecked(true);
+    connect(m_textureRadio, &QRadioButton::toggled, m_viewport, &Viewport::setUseTexture);
+
+    m_normalMapCheck = new QCheckBox("Normal map", surfaceGroup);
+    m_normalMapCheck->setObjectName("normalMapCheck");
+    m_normalMapCheck->setChecked(m_viewport->useNormalMap());
+    connect(m_normalMapCheck, &QCheckBox::toggled, m_viewport, &Viewport::setUseNormalMap);
+
+    // built-in images in a list (item data = resource path), files loaded by the user are added to it
+    const auto addImageCombo = [&](const QString &name, const auto &images) {
+        auto *combo = new QComboBox(surfaceGroup);
+        combo->setObjectName(name);
+        for (const BuiltInImage &image : images)
+            combo->addItem(QString::fromUtf8(image.name), QString::fromUtf8(image.path));
+        return combo;
+    };
+    m_textureCombo = addImageCombo("textureCombo", kBuiltInTextures);
+    m_normalMapCombo = addImageCombo("normalMapCombo", kBuiltInNormalMaps);
+    auto *loadTextureButton = new QPushButton("Load texture...", surfaceGroup);
+    loadTextureButton->setObjectName("loadTextureButton");
+    auto *loadNormalMapButton = new QPushButton("Load normal map...", surfaceGroup);
+    loadNormalMapButton->setObjectName("loadNormalMapButton");
+
+    surfaceLayout->addWidget(solidColorRadio);
+    surfaceLayout->addWidget(m_textureRadio);
+    surfaceLayout->addWidget(m_textureCombo);
+    surfaceLayout->addWidget(loadTextureButton);
+    surfaceLayout->addWidget(m_normalMapCheck);
+    surfaceLayout->addWidget(m_normalMapCombo);
+    surfaceLayout->addWidget(loadNormalMapButton);
+
+    // connected after filling the lists: adding the first item already emits currentIndexChanged
+    connect(m_textureCombo, &QComboBox::currentIndexChanged, this, [this](const int i) {
+        loadTextureFrom(m_textureCombo->itemData(i).toString());
+    });
+    connect(m_normalMapCombo, &QComboBox::currentIndexChanged, this, [this](const int i) {
+        loadNormalMapFrom(m_normalMapCombo->itemData(i).toString());
+    });
+    connect(loadTextureButton, &QPushButton::clicked, this, &MainWindow::chooseTextureFile);
+    connect(loadNormalMapButton, &QPushButton::clicked, this, &MainWindow::chooseNormalMapFile);
+
     // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, light z as tenths, m in [1, 100] as is
     auto *lightGroup = new QGroupBox("Lighting", panel);
     auto *lightLayout = new QVBoxLayout(lightGroup);
@@ -133,6 +188,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
     panelLayout->addWidget(colorGroup);
+    panelLayout->addWidget(surfaceGroup);
     panelLayout->addWidget(lightGroup);
     panelLayout->addStretch();
     layout->addWidget(panel);
@@ -146,12 +202,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     resetLightPathAction->setObjectName("resetLightPathAction");
     connect(resetLightPathAction, &QAction::triggered, m_viewport, &Viewport::resetLightPath);
 
+    auto *surfaceMenu = menuBar()->addMenu("Surface");
+    auto *loadTextureAction = surfaceMenu->addAction("Load texture...");
+    loadTextureAction->setObjectName("loadTextureAction");
+    connect(loadTextureAction, &QAction::triggered, this, &MainWindow::chooseTextureFile);
+    auto *loadNormalMapAction = surfaceMenu->addAction("Load normal map...");
+    loadNormalMapAction->setObjectName("loadNormalMapAction");
+    connect(loadNormalMapAction, &QAction::triggered, this, &MainWindow::chooseNormalMapFile);
+
     // Set central widget, window title and window size
     setCentralWidget(central);
     setWindowTitle("Bezier Surfaces");
     resize(1100, 800);
 
     loadDefaultSurfaces();
+    loadDefaultImages();
 }
 
 /// Loads the surfaces embedded in the executable. On error shows a message and continues with no surfaces.
@@ -202,4 +267,71 @@ void MainWindow::updateSurfaceColorButton(const int i) {
     QPixmap swatch(16, 16);
     swatch.fill(m_viewport->surfaceColor(i));
     m_surfaceColorButtons[i]->setIcon(QIcon(swatch));
+}
+
+/// The first built-in images are set in the viewport, but not switched on: the program starts with solid colors
+void MainWindow::loadDefaultImages() {
+    if (auto texture = loadImage(QString::fromUtf8(kBuiltInTextures.front().path), "texture"))
+        m_viewport->setTexture(std::move(*texture));
+    if (auto normalMap = loadImage(QString::fromUtf8(kBuiltInNormalMaps.front().path), "normal map"))
+        m_viewport->setNormalMap(std::move(*normalMap));
+}
+
+std::optional<Texture> MainWindow::loadImage(const QString &path, const QString &what) {
+    TextureLoadResult result = loadTexture(path);
+    if (!result.texture) {
+        statusBar()->showMessage(QString("Failed to load %1").arg(what));
+        QMessageBox::warning(this, QString("Failed to load %1").arg(what), result.error);
+        return std::nullopt;
+    }
+    return std::move(result.texture);
+}
+
+/// Shows which image is in use: the list item with this path, added (named after the file) if it isn't there yet
+void MainWindow::selectComboItem(QComboBox *combo, const QString &path) {
+    int i = combo->findData(path);
+    if (i < 0) {
+        combo->addItem(QFileInfo(path).fileName(), path);
+        i = combo->count() - 1;
+    }
+    const QSignalBlocker blocker(combo); // the image is already loaded, don't load it again
+    combo->setCurrentIndex(i);
+}
+
+bool MainWindow::loadTextureFrom(const QString &path) {
+    auto texture = loadImage(path, "texture");
+    if (!texture) return false;
+
+    m_viewport->setTexture(std::move(*texture));
+    selectComboItem(m_textureCombo, path);
+    m_textureRadio->setChecked(true); // a chosen texture is meant to be seen; toggled() switches the viewport
+    statusBar()->showMessage(QString("Texture: %1").arg(m_textureCombo->currentText()));
+    return true;
+}
+
+bool MainWindow::loadNormalMapFrom(const QString &path) {
+    auto normalMap = loadImage(path, "normal map");
+    if (!normalMap) return false;
+
+    m_viewport->setNormalMap(std::move(*normalMap));
+    selectComboItem(m_normalMapCombo, path);
+    m_normalMapCheck->setChecked(true);
+    statusBar()->showMessage(QString("Normal map: %1").arg(m_normalMapCombo->currentText()));
+    return true;
+}
+
+namespace {
+const QString kImageFilter = QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp);;All files (*)");
+} // namespace
+
+void MainWindow::chooseTextureFile() {
+    const QString path = QFileDialog::getOpenFileName(this, "Load texture", QString(), kImageFilter);
+    if (path.isEmpty()) return; // dialog cancelled
+    loadTextureFrom(path);
+}
+
+void MainWindow::chooseNormalMapFile() {
+    const QString path = QFileDialog::getOpenFileName(this, "Load normal map", QString(), kImageFilter);
+    if (path.isEmpty()) return;
+    loadNormalMapFrom(path);
 }
