@@ -58,11 +58,13 @@ add_executable(ui_tests
         ${PROJECT_SOURCE_DIR}/src/ui/ImageLoader.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/ImageLoader.h
 )
-# MainWindow loads :/assets/surfaces.txt at startup, like the program
+# The same resources as the program (MainWindow loads :/assets/surfaces.txt at startup, images from :/assets/...)
+set(BEZIER_TEST_ASSET_FILES ${BEZIER_ASSET_FILES})
+list(TRANSFORM BEZIER_TEST_ASSET_FILES PREPEND ${PROJECT_SOURCE_DIR}/)
 qt_add_resources(ui_tests "test_assets"
         PREFIX "/"
         BASE ${PROJECT_SOURCE_DIR}/src
-        FILES ${PROJECT_SOURCE_DIR}/src/assets/surfaces.txt
+        FILES ${BEZIER_TEST_ASSET_FILES}
 )
 target_include_directories(ui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ui_tests PRIVATE bezier_core Qt6::Widgets GTest::gtest)

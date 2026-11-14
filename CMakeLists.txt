@@ -59,11 +59,26 @@ qt_add_executable(bezier_surfaces
 target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE bezier_core Qt6::Widgets)
 
-# Data files embedded in the executable, available as ":/assets/..." (BASE strips the "src/" prefix)
+# Data files embedded in the executable, available as ":/assets/..." (BASE strips the "src/" prefix).
+# One list for the program and ui_tests; the images must match kBuiltInTextures / kBuiltInNormalMaps
+# in src/ui/ImageLoader.h (checked by ImageLoaderTest).
+set(BEZIER_ASSET_FILES
+        src/assets/surfaces.txt
+        src/assets/textures/texture_floor.png
+        src/assets/textures/texture_pipes.png
+        src/assets/normal_maps/normal_bricks.png
+        src/assets/normal_maps/normal_circle.png
+        src/assets/normal_maps/normal_floor.png
+        src/assets/normal_maps/normal_hemisphere.png
+        src/assets/normal_maps/normal_hex.png
+        src/assets/normal_maps/normal_pipes.png
+        src/assets/normal_maps/normal_rocks.png
+        src/assets/normal_maps/normal_waves.png
+)
 qt_add_resources(bezier_surfaces "assets"
         PREFIX "/"
         BASE src
-        FILES src/assets/surfaces.txt
+        FILES ${BEZIER_ASSET_FILES}
 )
 bezier_set_warnings(bezier_surfaces)
 
