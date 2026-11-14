@@ -55,6 +55,8 @@ qt_add_executable(bezier_surfaces
         src/ui/SurfaceLoader.h
         src/ui/ImageLoader.cpp
         src/ui/ImageLoader.h
+        src/ui/HelpWindow.cpp
+        src/ui/HelpWindow.h
 )
 target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE bezier_core Qt6::Widgets)
@@ -64,6 +66,8 @@ target_link_libraries(bezier_surfaces PRIVATE bezier_core Qt6::Widgets)
 # in src/ui/ImageLoader.h (checked by ImageLoaderTest).
 set(BEZIER_ASSET_FILES
         src/assets/surfaces.txt
+        src/assets/help_pl.md
+        src/assets/help_en.md
         src/assets/textures/texture_floor.png
         src/assets/textures/texture_pipes.png
         src/assets/normal_maps/normal_bricks.png

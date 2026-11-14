@@ -297,6 +297,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                                            QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(resetLightPathAction, &QAction::triggered, m_viewport, &Viewport::resetLightPath);
 
+    // F1, and the platform's own help key (Cmd+? on macOS) if it is another one
+    auto *helpMenu = menuBar()->addMenu("Help");
+    auto *helpAction = addAction(helpMenu, "Documentation", "helpAction", QKeySequence(Qt::Key_F1));
+    QList<QKeySequence> helpKeys = {QKeySequence(Qt::Key_F1)};
+    for (const QKeySequence &key : QKeySequence::keyBindings(QKeySequence::HelpContents))
+        if (!helpKeys.contains(key))
+            helpKeys << key;
+    helpAction->setShortcuts(helpKeys);
+    connect(helpAction, &QAction::triggered, this, &MainWindow::showHelp);
+
     // Set central widget, window title and window size
     setCentralWidget(central);
     setWindowTitle("Bezier Surfaces");
@@ -427,4 +437,12 @@ void MainWindow::changeEvent(QEvent *event) {
     QMainWindow::changeEvent(event);
     if (event->type() == QEvent::WindowStateChange && m_fullScreenAction)
         m_fullScreenAction->setChecked(isFullScreen()); // e.g. the green button on macOS
+}
+
+void MainWindow::showHelp() {
+    if (!m_helpWindow)
+        m_helpWindow = new HelpWindow(this); // owned by the main window, kept for the next F1
+    m_helpWindow->show();
+    m_helpWindow->raise();
+    m_helpWindow->activateWindow();
 }

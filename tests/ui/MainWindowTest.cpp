@@ -4,6 +4,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Viewport.h"
 #include "ui/ImageLoader.h"
+#include "ui/HelpWindow.h"
 
 #include "geometry/BezierCurve.h"
 #include "geometry/Mesh.h"
@@ -15,6 +16,7 @@
 #include <QMenuBar>
 #include <QSet>
 #include <QTest>
+#include <QTextBrowser>
 #include <QAction>
 #include <QComboBox>
 #include <QGroupBox>
@@ -821,6 +823,7 @@ std::vector<std::pair<QString, QKeySequence>> shortcuts() {
     {"animationAction", QKeySequence(Qt::Key_Space)},
     {"lightColorAction", QKeySequence(Qt::CTRL | Qt::Key_L)},
     {"resetLightPathAction", QKeySequence(Qt::CTRL | Qt::Key_R)},
+    {"helpAction", QKeySequence(Qt::Key_F1)},
     };
 }
 
@@ -1200,5 +1203,114 @@ TEST(MainWindowSurfacesTest, CheckBoxesInOneRowAboveTheirSwatches) {
         EXPECT_TRUE(sameRow(window, box, window.findChild<QCheckBox *>("surfaceVisibleCheck1")));
         EXPECT_LT(inWindow(window, box).bottom(), inWindow(window, swatch).top()) << "check box above its swatch";
         EXPECT_NEAR(inWindow(window, box).left(), inWindow(window, swatch).left(), 3) << "same column";
+    }
+}
+
+// ---------- documentation (help window) ----------
+
+namespace {
+QString helpText(const HelpLanguage language) {
+    QFile file(HelpWindow::helpPath(language));
+    EXPECT_TRUE(file.open(QIODevice::ReadOnly));
+    return QString::fromUtf8(file.readAll());
+}
+
+constexpr std::array kHelpLanguages = {HelpLanguage::Polish, HelpLanguage::English};
+} // namespace
+
+TEST(MainWindowHelpTest, HelpMenuOpensOneNonModalWindow) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *action = window.findChild<QAction *>("helpAction");
+    ASSERT_NE(action, nullptr);
+    EXPECT_EQ(action->text(), "Documentation");
+    QStringList titles;
+    for (QAction *menu : window.menuBar()->actions())
+        titles << menu->text();
+    EXPECT_TRUE(titles.contains("Help"));
+    EXPECT_EQ(window.helpWindow(), nullptr) << "created on first use";
+
+    action->trigger();
+    HelpWindow *help = window.helpWindow();
+    ASSERT_NE(help, nullptr);
+    EXPECT_TRUE(help->isVisible());
+    EXPECT_FALSE(help->isModal());
+    EXPECT_FALSE(help->findChild<QTextBrowser *>("helpBrowser")->toPlainText().isEmpty());
+
+    // closed and opened again: the same window, with the language chosen before
+    help->setLanguage(HelpLanguage::English);
+    help->close();
+    action->trigger();
+    EXPECT_EQ(window.helpWindow(), help);
+    EXPECT_TRUE(help->isVisible());
+    EXPECT_EQ(help->language(), HelpLanguage::English);
+}
+
+TEST(MainWindowHelpTest, F1KeyOpensHelp) {
+    MainWindow window;
+    ASSERT_TRUE(showActive(window));
+    QTest::keyClick(&window, Qt::Key_F1);
+    ASSERT_NE(window.helpWindow(), nullptr);
+    EXPECT_TRUE(window.helpWindow()->isVisible());
+}
+
+TEST(MainWindowHelpTest, EveryShortcutIsDocumentedInBothLanguages) {
+    // the list of shortcuts can't drift away from the program: every menu action has a shortcut (other test),
+    // and one of its shortcuts must be in the help, written as on Windows/Linux (Ctrl+T)
+    MainWindow window;
+    for (const HelpLanguage language : kHelpLanguages) {
+        const QString help = helpText(language);
+        for (QAction *action : window.findChildren<QAction *>()) {
+            if (action->objectName().isEmpty() || action->shortcuts().isEmpty()) continue;
+            bool documented = false;
+            for (const QKeySequence &key : action->shortcuts())
+                documented = documented || help.contains('`' + key.toString(QKeySequence::PortableText) + '`');
+            EXPECT_TRUE(documented) << (language == HelpLanguage::Polish ? "Polish" : "English") << ": "
+                                    << action->objectName().toStdString() << " ("
+                                    << action->shortcut().toString(QKeySequence::PortableText).toStdString() << ")";
+        }
+    }
+}
+
+TEST(MainWindowHelpTest, EveryMenuItemAndPanelControlIsDocumentedInBothLanguages) {
+    // UI texts are English in both help files ("Triangle fill", „Triangle fill”)
+    MainWindow window;
+    QStringList texts;
+    for (QAction *menu : window.menuBar()->actions()) {
+        texts << menu->text();
+        for (QAction *action : menu->menu()->actions())
+            if (!action->isSeparator()) texts << action->text();
+    }
+    for (QGroupBox *group : window.findChildren<QGroupBox *>()) texts << group->title();
+    for (QCheckBox *box : window.findChildren<QCheckBox *>()) texts << box->text();
+    for (QRadioButton *radio : window.findChildren<QRadioButton *>()) texts << radio->text();
+    for (const QString &button : {"Load...", "Light color...", "Stop animation", "Start animation"}) texts << button;
+    texts.removeDuplicates();
+    ASSERT_GT(texts.size(), 30);
+
+    for (const HelpLanguage language : kHelpLanguages) {
+        const QString help = helpText(language);
+        for (const QString &text : texts) {
+            // "Surface color 2..." is documented as the range "Surface color 1..." – "Surface color 3..."
+            if (text.startsWith("Surface color 2")) continue;
+            EXPECT_TRUE(help.contains(text)) << (language == HelpLanguage::Polish ? "Polish" : "English") << ": \""
+                                             << text.toStdString() << "\"";
+        }
+    }
+}
+
+TEST(MainWindowHelpTest, DocumentedNumbersMatchTheProgram) {
+    const QStringList numbers = {
+        QString::number(static_cast<double>(Viewport::kPickRadius)) + " px",          // grabbing the light curve
+        QString::number(Mesh::kMaxResolution),                                         // n from 1 to 50
+        QString::number(static_cast<double>(Viewport::kDefaultLightPathRadius)),       // default light circle
+        QString::number(static_cast<double>(Viewport::kLightSpeed)),                   // segments per second
+        QString::number(static_cast<double>(Projection::kSceneRadius)),                // scale of the projection
+    };
+    for (const HelpLanguage language : kHelpLanguages) {
+        const QString help = helpText(language);
+        for (const QString &number : numbers)
+            EXPECT_TRUE(help.contains(number)) << number.toStdString();
     }
 }
