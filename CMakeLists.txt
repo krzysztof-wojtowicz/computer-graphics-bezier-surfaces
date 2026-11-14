@@ -38,6 +38,7 @@ add_library(bezier_core STATIC
         src/renderer/ZBuffer.h
         src/renderer/Shading.h
         src/renderer/Texture.h
+        src/renderer/NormalMapping.h
 )
 target_include_directories(bezier_core PUBLIC src)
 bezier_set_warnings(bezier_core)
