@@ -53,6 +53,8 @@ qt_add_executable(bezier_surfaces
         src/ui/Viewport.h
         src/ui/SurfaceLoader.cpp
         src/ui/SurfaceLoader.h
+        src/ui/ImageLoader.cpp
+        src/ui/ImageLoader.h
 )
 target_include_directories(bezier_surfaces PRIVATE src)
 target_link_libraries(bezier_surfaces PRIVATE bezier_core Qt6::Widgets)
