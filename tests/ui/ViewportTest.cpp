@@ -12,6 +12,7 @@
 #include "renderer/Projection.h"
 #include "geometry/BezierCurve.h"
 #include "math/TestUtils.h"
+#include "ui/ImageLoader.h"
 #include "renderer/Texture.h"
 #include "renderer/NormalMapping.h"
 
@@ -1984,7 +1985,7 @@ float expectedDiffuseRed(const Viewport &viewport, const BezierSurface &surface,
     const Mat3 &R = viewport.rotation();
     Vec3 N = normalized(R * sp.N);
     if (withMap)
-        N = perturbNormal(R * sp.Pu, R * sp.Pv, N, colorToNormal(viewport.normalMap().sample(u, v)));
+        N = perturbNormal(R * sp.Pu, R * sp.Pv, N, normalFromMap(viewport.normalMap().sample(u, v)));
     if (N.z < 0) N = -N; // lit from both sides
     const Vec3 L = normalized(viewport.lightPosition() - R * sp.P);
     const float io = ioRed >= 0.0f ? ioRed : static_cast<float>(viewport.surfaceColor(0).red()) / 255.0f;
@@ -2055,6 +2056,46 @@ TEST(ViewportNormalMapTest, FlatMapKeepsImageAlmostUnchanged) {
             ++changed;
     }
     EXPECT_LT(changed, static_cast<int>(drawn.size() / 1000)) << changed << " pixels changed by more than 3";
+}
+
+TEST(ViewportNormalMapTest, BumpIsLitOnTheSideFacingTheLight) {
+    // normal_circle is a round bump: wherever the light is, the side of the bump facing it is the brightest.
+    // Checks the orientation of both axes of the map against the scene (the y axis of normal maps points
+    // up the image, v grows down the image), independently of how the normal is computed
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({textureSquare(viewport)}); // flat on the screen, centred, half side 3
+    TextureLoadResult bump = loadTexture(":/assets/normal_maps/normal_circle.png");
+    ASSERT_TRUE(bump.texture.has_value()) << bump.error.toStdString();
+    viewport.setNormalMap(std::move(*bump.texture));
+    viewport.setUseNormalMap(true);
+    showViewport(viewport, kMeshImageSize);
+
+    // four sides of the bump on the screen: right, top, left, bottom (scene y points up the screen)
+    const std::array<Vec3, 4> sides = {{{1.8f, 0.0f, 0.0f}, {0.0f, 1.8f, 0.0f}, {-1.8f, 0.0f, 0.0f}, {0.0f, -1.8f, 0.0f}}};
+    const float lap = static_cast<float>(viewport.lightPath().segments()) / Viewport::kLightSpeed;
+    int checked = 0;
+    for (int step = 0; step < 8; ++step) {
+        const Vec3 light = viewport.lightPosition();
+        const QImage img = grabImage(viewport);
+        int brightest = 0, facing = 0;
+        for (int k = 0; k < 4; ++k) {
+            if (colorAt(img, sceneToScreen(sides[k])).red() > colorAt(img, sceneToScreen(sides[brightest])).red())
+                brightest = k;
+            if (dot(sides[k], light) > dot(sides[facing], light))
+                facing = k;
+        }
+        // light on a diagonal faces two sides equally: no single answer, skip it
+        float second = -1e9f;
+        for (int k = 0; k < 4; ++k)
+            if (k != facing) second = std::max(second, dot(sides[k], light));
+        if (dot(sides[facing], light) - second > 0.5f * dot(sides[facing], light)) {
+            ++checked;
+            EXPECT_EQ(brightest, facing) << "light at " << light.x << ", " << light.y;
+        }
+        viewport.stepAnimation(lap / 8.0f);
+    }
+    EXPECT_EQ(checked, 4) << "the light should pass the four sides of the bump";
 }
 
 TEST(ViewportNormalMapTest, BentNormalGivesLambertBrightness) {

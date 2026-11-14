@@ -518,7 +518,7 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
                         if (m_useNormalMap) {
                             const Vec3 Pu = interpolate(w, vertices[v1].after.Pu, vertices[v2].after.Pu, vertices[v3].after.Pu);
                             const Vec3 Pv = interpolate(w, vertices[v1].after.Pv, vertices[v2].after.Pv, vertices[v3].after.Pv);
-                            N = perturbNormal(Pu, Pv, N, colorToNormal(m_normalMap.sample(u, v)));
+                            N = perturbNormal(Pu, Pv, N, normalFromMap(m_normalMap.sample(u, v)));
                         }
                     }
 
