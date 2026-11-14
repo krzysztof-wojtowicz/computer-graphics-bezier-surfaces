@@ -49,6 +49,7 @@ add_executable(ui_tests
         ui/ViewportTest.cpp
         ui/MainWindowTest.cpp
         ui/ImageLoaderTest.cpp
+        ui/HelpWindowTest.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/Viewport.h
         ${PROJECT_SOURCE_DIR}/src/ui/MainWindow.cpp
@@ -57,6 +58,8 @@ add_executable(ui_tests
         ${PROJECT_SOURCE_DIR}/src/ui/SurfaceLoader.h
         ${PROJECT_SOURCE_DIR}/src/ui/ImageLoader.cpp
         ${PROJECT_SOURCE_DIR}/src/ui/ImageLoader.h
+        ${PROJECT_SOURCE_DIR}/src/ui/HelpWindow.cpp
+        ${PROJECT_SOURCE_DIR}/src/ui/HelpWindow.h
 )
 # The same resources as the program (MainWindow loads :/assets/surfaces.txt at startup, images from :/assets/...)
 set(BEZIER_TEST_ASSET_FILES ${BEZIER_ASSET_FILES})

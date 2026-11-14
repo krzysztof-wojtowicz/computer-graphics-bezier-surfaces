@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Viewport.h"
+#include "ui/HelpWindow.h"
 #include "geometry/BezierSurface.h"
 #include "renderer/Texture.h"
 
@@ -30,6 +31,10 @@ public:
     bool loadTextureFrom(const QString &path);
     /// The same for the normal map: loads it and switches the normal map on
     bool loadNormalMapFrom(const QString &path);
+
+    /// Opens the documentation (or brings it to the front); one window, created on first use
+    void showHelp();
+    [[nodiscard]] HelpWindow *helpWindow() const { return m_helpWindow; }
 
 protected:
     /// Keeps the "Full screen" action checked in sync when the window leaves full screen by other means
@@ -56,4 +61,5 @@ private:
     QCheckBox *m_normalMapCheck = nullptr;
     QComboBox *m_normalMapCombo = nullptr;
     QAction *m_fullScreenAction = nullptr;
+    HelpWindow *m_helpWindow = nullptr;
 };
