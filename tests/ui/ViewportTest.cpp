@@ -1380,6 +1380,31 @@ bool drawnAlong(const QImage &img, const QPointF &a, const QPointF &b) {
 }
 } // namespace
 
+TEST(ViewportLightPathTest, DefaultPathAndLightStayInsideSmallestImage) {
+    // every control point (handles lie outside the circle) and the light marker on the whole lap must be
+    // drawn inside the image, with nothing touching its border, even at the minimum size of the viewport
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    const QSize smallest = viewport.minimumSize();
+    viewport.resize(smallest);
+    QCoreApplication::processEvents();
+    for (const Vec3 &p : viewport.lightPath().points())
+        EXPECT_LT(std::hypot(p.x, p.y), Projection::kSceneRadius) << p.x << ", " << p.y;
+
+    const float lap = static_cast<float>(viewport.lightPath().segments()) / Viewport::kLightSpeed;
+    for (int step = 0; step < 16; ++step) {
+        const QImage img = grabImage(viewport);
+        ASSERT_EQ(img.size(), smallest);
+        int touching = 0;
+        for (int x = 0; x < img.width(); ++x)
+            touching += !isWhite(img, x, 0) + !isWhite(img, x, img.height() - 1);
+        for (int y = 0; y < img.height(); ++y)
+            touching += !isWhite(img, 0, y) + !isWhite(img, img.width() - 1, y);
+        EXPECT_EQ(touching, 0) << "step " << step << ": light path or light marker cut by the border";
+        viewport.stepAnimation(lap / 16.0f);
+    }
+}
+
 TEST(ViewportLightPathTest, DefaultPathIsCircleAboveScene) {
     const Viewport viewport;
     expectPathEqual(viewport.lightPath(),
@@ -2234,6 +2259,89 @@ TEST(ViewportMouseTest, ResetRotationRestoresInitialViewAndImage) {
     expectPathEqual(viewport.lightPath(), path); // the light path is bound to the camera, not to the scene
 }
 
+// ---------- surface visibility (per color group) ----------
+
+namespace {
+/// Every layer on: hiding a surface must remove its fill, mesh, polygon, points and control points
+void showEveryLayer(Viewport &viewport) {
+    viewport.setShowFill(true);
+    viewport.setShowMesh(true);
+    viewport.setShowPolygon(true);
+    viewport.setShowPoints(true);
+    viewport.setKs(0.0f);
+}
+
+/// Nothing drawn in a box around a point given in scene coordinates
+bool emptyAround(const QImage &img, const Vec3 &q, const int half) {
+    const QPointF c = sceneToScreen(q);
+    for (int y = static_cast<int>(c.y()) - half; y <= static_cast<int>(c.y()) + half; ++y)
+        for (int x = static_cast<int>(c.x()) - half; x <= static_cast<int>(c.x()) + half; ++x)
+            if (!isWhite(img, x, y)) return false;
+    return true;
+}
+} // namespace
+
+TEST(ViewportVisibilityTest, EverySurfaceVisibleByDefault) {
+    const Viewport viewport;
+    for (int i = 0; i < Viewport::kColorCount; ++i)
+        EXPECT_TRUE(viewport.surfaceVisible(i)) << i;
+}
+
+TEST(ViewportVisibilityTest, HidingSurfaceRemovesAllItsLayersOnly) {
+    Viewport viewport;
+    showEveryLayer(viewport);
+    viewport.setSurfaces(squaresInRow(viewport));
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    for (int k = 0; k < 3; ++k)
+        ASSERT_FALSE(emptyAround(before, kSquareCenters[k], 30)) << "square " << k << " not drawn";
+
+    viewport.setSurfaceVisible(1, false); // shown widget: only a setter with render() changes the grab
+    EXPECT_FALSE(viewport.surfaceVisible(1));
+    const QImage after = grabImage(viewport);
+    EXPECT_TRUE(emptyAround(after, kSquareCenters[1], 40)) << "fill, mesh, points and polygon of square 1 are gone";
+    for (const int k : {0, 2})
+        EXPECT_TRUE(sameAround(after, before, sceneToScreen(kSquareCenters[k]))) << "square " << k << " unchanged";
+
+    viewport.setSurfaceVisible(1, true);
+    EXPECT_EQ(grabImage(viewport), before);
+}
+
+TEST(ViewportVisibilityTest, SwitchHidesEverySurfaceOfItsGroup) {
+    // surface k belongs to group k % kColorCount, like its color: switch 0 hides surfaces 0 and 3
+    Viewport viewport;
+    showEveryLayer(viewport);
+    viewport.setSurfaces(squaresInRow(viewport, true));
+    showViewport(viewport, kMeshImageSize);
+    viewport.setSurfaceVisible(0, false);
+    const QImage img = grabImage(viewport);
+    EXPECT_TRUE(emptyAround(img, kSquareCenters[0], 30));
+    EXPECT_TRUE(emptyAround(img, kSquareCenters[3], 30));
+    EXPECT_FALSE(emptyAround(img, kSquareCenters[1], 30));
+    EXPECT_FALSE(emptyAround(img, kSquareCenters[2], 30));
+}
+
+TEST(ViewportVisibilityTest, HiddenSurfaceDoesNotHideWhatIsBehindIt) {
+    // a hidden surface must not leave its depth in the Z-buffer
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({sceneRect(viewport, kNearCenter, 2.0f, 2.0f), sceneRect(viewport, kFarCenter, 2.0f, 2.0f)});
+    const QImage both = showViewport(viewport, kMeshImageSize);
+    const int far = surfaceAt(both, sceneToScreen(kFarOnly));
+    ASSERT_NE(surfaceAt(both, sceneToScreen(kOverlap)), far) << "the near square covers the overlap";
+
+    viewport.setSurfaceVisible(0, false); // the near square
+    EXPECT_EQ(surfaceAt(grabImage(viewport), sceneToScreen(kOverlap)), far);
+}
+
+TEST(ViewportVisibilityTest, HidingEverySurfaceLeavesOnlyLightPath) {
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    showViewport(viewport, kMeshImageSize);
+    for (int i = 0; i < Viewport::kColorCount; ++i)
+        viewport.setSurfaceVisible(i, false);
+    EXPECT_TRUE(drawnPixels(grabImage(viewport)).empty()) << "light path is hidden in a bare Viewport";
+}
+
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(ViewportResolutionDeathTest, RejectsResolutionOutOfRange) {
     GTEST_FLAG_SET(death_test_style, "threadsafe"); // Qt has threads running, don't just fork
@@ -2253,6 +2361,13 @@ TEST(ViewportDeathTest, RejectsSurfaceColorIndexOutOfRangeAndInvalidColor) {
     EXPECT_DEATH(viewport.setSurfaceColor(Viewport::kColorCount, Qt::red), "surface color index out of range");
     EXPECT_DEATH(std::ignore = viewport.surfaceColor(Viewport::kColorCount), "surface color index out of range");
     EXPECT_DEATH(viewport.setSurfaceColor(0, QColor()), "invalid surface color");
+}
+
+TEST(ViewportDeathTest, RejectsSurfaceGroupIndexOutOfRange) {
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setSurfaceVisible(-1, false), "surface group index out of range");
+    EXPECT_DEATH(viewport.setSurfaceVisible(Viewport::kColorCount, false), "surface group index out of range");
+    EXPECT_DEATH(std::ignore = viewport.surfaceVisible(Viewport::kColorCount), "surface group index out of range");
 }
 
 TEST(ViewportDeathTest, RejectsLightZOutOfRange) {

@@ -2,6 +2,7 @@
 #include "ui/SurfaceLoader.h"
 #include "ui/ImageLoader.h"
 
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
@@ -46,7 +47,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     // Create side panel with fixed width and vertical layout
     auto *panel = new QWidget(central);
-    panel->setFixedWidth(280);
+    panel->setFixedWidth(kPanelWidth);
     auto *panelLayout = new QVBoxLayout(panel);
 
     auto *meshGroup = new QGroupBox("Triangulation", panel);
@@ -65,12 +66,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         resolutionLabel->setText(QString("Resolution n = %1").arg(n));
     });
 
+    // two columns of check boxes, filled row by row
     auto *displayGroup = new QGroupBox("Display", panel);
-    auto *displayLayout = new QVBoxLayout(displayGroup);
+    auto *displayLayout = new QGridLayout(displayGroup);
+    int toggleCount = 0;
     auto addToggle = [&](const QString &text, bool initial, void (Viewport::*setter)(bool)) {
         auto *box = new QCheckBox(text, displayGroup);
         box->setChecked(initial);
-        displayLayout->addWidget(box);
+        displayLayout->addWidget(box, toggleCount / 2, toggleCount % 2);
+        ++toggleCount;
         connect(box, &QCheckBox::toggled, m_viewport, setter);
     };
     addToggle("Bezier polygon", m_viewport->showPolygon(), &Viewport::setShowPolygon);
@@ -80,20 +84,31 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_viewport->setShowLightPath(true); // hidden in a bare Viewport, shown in the program from the start
     addToggle("Light path", m_viewport->showLightPath(), &Viewport::setShowLightPath);
 
-    // one button per surface color (surfaces take them in turn), each shows its color as an icon
-    auto *colorGroup = new QGroupBox("Surface colors", panel);
-    auto *colorLayout = new QVBoxLayout(colorGroup);
+    // one column per surface group (surfaces take them in turn: surface k is in group k % kColorCount):
+    // a check box that shows / hides the group and, below it, a button that is just a swatch of its color
+    auto *surfacesGroup = new QGroupBox("Surfaces", panel);
+    auto *surfacesLayout = new QGridLayout(surfacesGroup);
     for (int i = 0; i < Viewport::kColorCount; ++i) {
-        auto *button = new QPushButton(QString("Color %1...").arg(i + 1), colorGroup);
+        auto *visible = new QCheckBox(QString("Surface %1").arg(i + 1), surfacesGroup);
+        visible->setObjectName(QString("surfaceVisibleCheck%1").arg(i + 1));
+        visible->setToolTip(QString("Show surface %1 (and every %2th surface after it)").arg(i + 1).arg(Viewport::kColorCount));
+        visible->setChecked(m_viewport->surfaceVisible(i));
+        surfacesLayout->addWidget(visible, 0, i);
+        connect(visible, &QCheckBox::toggled, m_viewport, [this, i](const bool on) { m_viewport->setSurfaceVisible(i, on); });
+
+        auto *button = new QPushButton(surfacesGroup);
         button->setObjectName(QString("surfaceColorButton%1").arg(i + 1));
-        colorLayout->addWidget(button);
+        button->setToolTip(QString("Surface color %1...").arg(i + 1));
+        button->setAccessibleName(QString("Surface color %1").arg(i + 1));
+        button->setIconSize(kSwatchSize);
+        surfacesLayout->addWidget(button, 1, i);
         connect(button, &QPushButton::clicked, this, [this, i] { chooseSurfaceColor(i); });
         m_surfaceColorButtons[i] = button;
         updateSurfaceColorButton(i);
     }
 
     // object color IO (surface colors or a texture) and the normal map, independent of each other
-    auto *surfaceGroup = new QGroupBox("Surface", panel);
+    auto *surfaceGroup = new QGroupBox("Surface texture", panel);
     auto *surfaceLayout = new QVBoxLayout(surfaceGroup);
     auto *solidColorRadio = new QRadioButton("Solid color", surfaceGroup);
     solidColorRadio->setObjectName("solidColorRadio");
@@ -117,18 +132,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     };
     m_textureCombo = addImageCombo("textureCombo", kBuiltInTextures);
     m_normalMapCombo = addImageCombo("normalMapCombo", kBuiltInNormalMaps);
-    auto *loadTextureButton = new QPushButton("Load texture...", surfaceGroup);
+    auto *loadTextureButton = new QPushButton("Load...", surfaceGroup);
     loadTextureButton->setObjectName("loadTextureButton");
-    auto *loadNormalMapButton = new QPushButton("Load normal map...", surfaceGroup);
+    loadTextureButton->setToolTip("Load texture from a file");
+    auto *loadNormalMapButton = new QPushButton("Load...", surfaceGroup);
     loadNormalMapButton->setObjectName("loadNormalMapButton");
+    loadNormalMapButton->setToolTip("Load normal map from a file");
 
-    surfaceLayout->addWidget(solidColorRadio);
-    surfaceLayout->addWidget(m_textureRadio);
-    surfaceLayout->addWidget(m_textureCombo);
-    surfaceLayout->addWidget(loadTextureButton);
+    // rows: [solid color | texture], [texture list | Load...], [normal map], [normal map list | Load...]
+    const auto addRow = [surfaceLayout](QWidget *left, QWidget *right, const int leftStretch) {
+        auto *row = new QHBoxLayout();
+        row->addWidget(left, leftStretch);
+        row->addWidget(right, 1);
+        surfaceLayout->addLayout(row);
+    };
+    addRow(solidColorRadio, m_textureRadio, 1);
+    addRow(m_textureCombo, loadTextureButton, 2);
     surfaceLayout->addWidget(m_normalMapCheck);
-    surfaceLayout->addWidget(m_normalMapCombo);
-    surfaceLayout->addWidget(loadNormalMapButton);
+    addRow(m_normalMapCombo, loadNormalMapButton, 2);
 
     // connected after filling the lists: adding the first item already emits currentIndexChanged
     connect(m_textureCombo, &QComboBox::currentIndexChanged, this, [this](const int i) {
@@ -172,7 +193,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // the button shows the current light color as an icon; the same dialog is also in the menu
     m_lightColorButton = new QPushButton("Light color...", lightGroup);
     m_lightColorButton->setObjectName("lightColorButton");
-    lightLayout->addWidget(m_lightColorButton);
     connect(m_lightColorButton, &QPushButton::clicked, this, &MainWindow::chooseLightColor);
     updateLightColorButton();
 
@@ -185,13 +205,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     };
     animationButton->setChecked(m_viewport->isAnimating());
     updateAnimationText(m_viewport->isAnimating());
-    lightLayout->addWidget(animationButton);
+    // the two buttons share a row, half of it each
+    auto *buttonRow = new QHBoxLayout();
+    buttonRow->addWidget(m_lightColorButton, 1);
+    buttonRow->addWidget(animationButton, 1);
+    lightLayout->addLayout(buttonRow);
     connect(animationButton, &QPushButton::toggled, m_viewport, &Viewport::setAnimating);
     connect(animationButton, &QPushButton::toggled, animationButton, updateAnimationText);
 
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
-    panelLayout->addWidget(colorGroup);
+    panelLayout->addWidget(surfacesGroup);
     panelLayout->addWidget(surfaceGroup);
     panelLayout->addWidget(lightGroup);
     panelLayout->addStretch();
@@ -276,7 +300,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // Set central widget, window title and window size
     setCentralWidget(central);
     setWindowTitle("Bezier Surfaces");
-    resize(1100, 800);
+    resize(1300, 800);
 
     loadDefaultSurfaces();
     loadDefaultImages();
@@ -327,7 +351,7 @@ void MainWindow::chooseSurfaceColor(const int i) {
 }
 
 void MainWindow::updateSurfaceColorButton(const int i) {
-    QPixmap swatch(16, 16);
+    QPixmap swatch(kSwatchSize);
     swatch.fill(m_viewport->surfaceColor(i));
     m_surfaceColorButtons[i]->setIcon(QIcon(swatch));
 }

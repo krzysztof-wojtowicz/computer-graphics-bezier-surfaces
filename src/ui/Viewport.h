@@ -28,7 +28,9 @@ public:
     static constexpr float kMinLightZ = 0.0f;
     static constexpr float kMaxLightZ = 20.0f;
     /// Default light path: a circle around the screen centre, above the scene
-    static constexpr float kDefaultLightPathRadius = 5.15f;
+    /// The handles of a 4-segment circle lie at r * sqrt(1 + k^2) ~ 1.14 r from the centre: 4.3 keeps them
+    /// (and the light marker) inside the scene circle, so they are visible and can be grabbed
+    static constexpr float kDefaultLightPathRadius = 4.3f;
     static constexpr float kDefaultLightZ = 8.0f;
     static constexpr float kLightSpeed = 0.5f; // curve segments per second (4 segments = 8 s per lap)
     static constexpr float kPickRadius = 8; // px: a press this close to a light path point drags it, else rotates
@@ -63,6 +65,8 @@ public:
     [[nodiscard]] QColor lightColor() const;
     /// Fill color i, the polygon and mesh shades are derived from it
     [[nodiscard]] QColor surfaceColor(int i) const;
+    /// Surfaces are grouped like their colors: switch i shows or hides surfaces i, i + kColorCount, ...
+    [[nodiscard]] bool surfaceVisible(int i) const;
     [[nodiscard]] QColor polygonColor(int i) const { return surfaceColor(i).darker(kPolygonDarkness); }
     [[nodiscard]] QColor meshColor(int i) const { return surfaceColor(i).darker(kMeshDarkness); }
     [[nodiscard]] bool useTexture() const { return m_useTexture; }
@@ -88,6 +92,7 @@ public:
     void setM(float m);
     void setLightColor(const QColor &color);
     void setSurfaceColor(int i, const QColor &color);
+    void setSurfaceVisible(int i, bool visible);
     /// Object color IO: false = surface colors, true = the texture (on every surface)
     void setUseTexture(bool use);
     void setTexture(Texture texture);
@@ -136,6 +141,7 @@ private:
     Texture m_texture; // 1x1 white until MainWindow sets one; Viewport doesn't load files
     Texture m_normalMap = Texture(1, 1, {128, 128, 255}); // flat (N_map ~ [0, 0, 1]) until MainWindow sets one
     std::array<QColor, kColorCount> m_surfaceColors = kDefaultSurfaceColors; // fill colors, used in turn
+    std::array<bool, kColorCount> m_surfaceVisible = {true, true, true}; // per color group, like the colors
     BezierCurve m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, kDefaultLightZ); // light path for animation
 
     float m_lightT = 0.0f; // light position parameter on m_lightPath, kept in [0, segments)

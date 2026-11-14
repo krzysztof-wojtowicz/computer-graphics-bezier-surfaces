@@ -194,6 +194,19 @@ void Viewport::resetRotation() {
     update();
 }
 
+bool Viewport::surfaceVisible(const int i) const {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    return m_surfaceVisible[i];
+}
+
+void Viewport::setSurfaceVisible(const int i, const bool visible) {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    m_surfaceVisible[i] = visible;
+
+    render();
+    update();
+}
+
 void Viewport::resetLightPath() {
     m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, lightZ());
     m_draggedPoint = -1; // a reset during a drag must not keep moving a point of the old curve
@@ -321,54 +334,40 @@ void Viewport::render() {
         const int h = m_frame.height();
         const auto proj = Projection(w, h);
 
+        // every layer of every visible surface; surface k takes color (and visibility switch) k % kColorCount.
+        // A hidden surface is skipped entirely, also in the Z-buffer, so it doesn't hide what is behind it
+        const auto forEachVisible = [this](auto &&draw) {
+            for (int k = 0; k < static_cast<int>(m_meshes.size()); ++k) {
+                const int idx = k % kColorCount;
+                if (m_surfaceVisible[idx])
+                    draw(m_meshes[k], idx);
+            }
+        };
+
         // fill triangles
         if (m_showFill) {
             const auto raster = Rasterizer(w, h);
-            int idx = 0;
-            for (const auto &mesh: m_meshes) {
-                fillTriangles(proj, mesh, raster, idx);
-                idx = ++idx % kColorCount;
-            }
+            forEachVisible([&](const Mesh &mesh, const int idx) { fillTriangles(proj, mesh, raster, idx); });
         }
 
         QPainter painter(&m_frame);
         painter.setRenderHint(QPainter::Antialiasing);
 
         // draw every triangle for every mesh
-        if (m_showMesh) {
-            int idx = 0;
-            for (const auto &mesh: m_meshes) {
-                drawTriangles(proj, mesh, painter, idx);
-                idx = ++idx % kColorCount;
-            }
-        }
+        if (m_showMesh)
+            forEachVisible([&](const Mesh &mesh, const int idx) { drawTriangles(proj, mesh, painter, idx); });
 
         // draw bezier polygon for every mesh
-        if (m_showPolygon) {
-            int idx = 0;
-            for (const auto &mesh: m_meshes) {
-                drawPolygon(proj, mesh, painter, idx);
-                idx = ++idx % kColorCount;
-            }
-        }
+        if (m_showPolygon)
+            forEachVisible([&](const Mesh &mesh, const int idx) { drawPolygon(proj, mesh, painter, idx); });
 
         // draw every mesh vertex for every mesh
-        if (m_showPoints) {
-            int idx = 0;
-            for (const auto &mesh: m_meshes) {
-                drawVertices(proj, mesh, painter, idx);
-                idx = ++idx % kColorCount;
-            }
-        }
+        if (m_showPoints)
+            forEachVisible([&](const Mesh &mesh, const int idx) { drawVertices(proj, mesh, painter, idx); });
 
         // draw every Bezier surface control point
-        if (m_showPolygon) {
-            int idx = 0;
-            for (const auto &mesh: m_meshes) {
-                drawControlPoints(proj, mesh, painter, idx);
-                idx = ++idx % kColorCount;
-            }
-        }
+        if (m_showPolygon)
+            forEachVisible([&](const Mesh &mesh, const int idx) { drawControlPoints(proj, mesh, painter, idx); });
 
         // draw light path and current light position
         if (m_showLightPath) {
