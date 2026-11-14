@@ -12,6 +12,7 @@
 #include "renderer/Projection.h"
 #include "geometry/BezierCurve.h"
 #include "math/TestUtils.h"
+#include "renderer/Texture.h"
 
 #include <QColor>
 #include <QCoreApplication>
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <tuple>
@@ -1753,6 +1755,200 @@ TEST(ViewportColorTest, PolygonAndMeshUseDerivedShades) {
         const QColor expected = polygon ? viewport.polygonColor(0) : viewport.meshColor(0);
         EXPECT_NEAR(darkestChannel(img, &QColor::blue, dots, 5.0), expected.blue(), 8);
     }
+}
+
+// ---------- 8: texture as the object color ----------
+
+namespace {
+Texture solidTexture(const QColor &c) {
+    return {1, 1, {static_cast<std::uint8_t>(c.red()), static_cast<std::uint8_t>(c.green()),
+                   static_cast<std::uint8_t>(c.blue())}};
+}
+
+constexpr int kStripes = 20;
+
+/// Bytes of stripe k: red grows and blue falls with k, red + blue = 300 for every stripe,
+/// so k can be read back from red / (red + blue) whatever the brightness of the lighting is
+std::array<std::uint8_t, 3> stripeBytes(const int k) {
+    return {static_cast<std::uint8_t>(50 + 10 * k), 0, static_cast<std::uint8_t>(250 - 10 * k)};
+}
+
+/// kStripes texels in a row (along u) or in a column (along v)
+Texture stripes(const bool alongU) {
+    std::vector<std::uint8_t> bytes;
+    for (int k = 0; k < kStripes; ++k) {
+        const auto b = stripeBytes(k);
+        bytes.insert(bytes.end(), b.begin(), b.end());
+    }
+    return alongU ? Texture(kStripes, 1, bytes) : Texture(1, kStripes, bytes);
+}
+
+/// Stripe index seen in a pixel (inverse of stripeBytes), -1 if the pixel is not a lit stripe
+float stripeAt(const QImage &img, const QPointF &p) {
+    const QColor c = colorAt(img, p);
+    if (c.red() + c.blue() < 60 || c.green() != 0) return -1.0f;
+    const float ratio = static_cast<float>(c.red()) / static_cast<float>(c.red() + c.blue());
+    return (300.0f * ratio - 50.0f) / 10.0f;
+}
+
+/// Square lying flat on the screen at the scene centre: (u, v) is linear in the screen position
+BezierSurface textureSquare(const Viewport &viewport) {
+    return sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 3.0f, 3.0f);
+}
+} // namespace
+
+TEST(ViewportTextureTest, OffByDefaultWithWhiteTexture) {
+    const Viewport viewport;
+    EXPECT_FALSE(viewport.useTexture());
+    EXPECT_EQ(viewport.texture().width(), 1);
+    EXPECT_EQ(viewport.texture().height(), 1);
+    const ShadingColor c = viewport.texture().texel(0, 0);
+    EXPECT_FLOAT_EQ(c.r, 1.0f);
+    EXPECT_FLOAT_EQ(c.g, 1.0f);
+    EXPECT_FLOAT_EQ(c.b, 1.0f);
+}
+
+TEST(ViewportTextureTest, SettersStoreValuesAndRedraw) {
+    // shown widget: only a setter that calls render() changes the grabbed image
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({textureSquare(viewport)});
+    const QPointF p = sceneToScreen({0.0f, 0.0f, 0.0f});
+    const QColor initial = colorAt(showViewport(viewport, kMeshImageSize), p);
+
+    viewport.setTexture(solidTexture(QColor(0, 0, 255)));
+    EXPECT_EQ(viewport.texture().texel(0, 0).b, 1.0f);
+    EXPECT_EQ(colorAt(grabImage(viewport), p), initial) << "texture set but not used yet";
+
+    viewport.setUseTexture(true);
+    EXPECT_TRUE(viewport.useTexture());
+    const QColor blue = colorAt(grabImage(viewport), p);
+    EXPECT_NE(blue, initial) << "setUseTexture";
+
+    viewport.setTexture(solidTexture(QColor(0, 255, 0)));
+    EXPECT_NE(colorAt(grabImage(viewport), p), blue) << "setTexture";
+}
+
+TEST(ViewportTextureTest, SolidTextureReplacesSurfaceColor) {
+    // diffuse only, white light: the fill keeps only the channels of the texture
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({textureSquare(viewport)});
+    viewport.setTexture(solidTexture(QColor(255, 0, 0)));
+    viewport.setUseTexture(true);
+    const QColor c = colorAt(showViewport(viewport, kMeshImageSize), sceneToScreen({0.0f, 0.0f, 0.0f}));
+    EXPECT_GT(c.red(), 100);
+    EXPECT_EQ(c.green(), 0);
+    EXPECT_EQ(c.blue(), 0);
+}
+
+TEST(ViewportTextureTest, TextureIsLitLikeSurfaceColor) {
+    // the texture is IO in the lighting equation, not a color painted over it
+    Viewport viewport;
+    showOnlyFill(viewport);
+    viewport.setSurfaces({textureSquare(viewport)});
+    viewport.setTexture(solidTexture(QColor(255, 255, 255)));
+    viewport.setUseTexture(true);
+    viewport.setKd(0.0f);
+    viewport.setKs(0.0f);
+    const QImage img = showViewport(viewport, kMeshImageSize);
+    EXPECT_EQ(colorAt(img, sceneToScreen({0.0f, 0.0f, 0.0f})), QColor(Qt::black));
+    EXPECT_TRUE(isWhite(img, 0, 0)) << "background stays white";
+}
+
+TEST(ViewportTextureTest, UMapsAlongFirstParameterAndVAlongSecond) {
+    // u = 0.25 and u = 0.75 fall into different texels of a texture split along u,
+    // but into the same texel of a texture split along v (and the other way round)
+    const std::array<std::uint8_t, 3> red = {255, 0, 0}, blue = {0, 0, 255};
+    const Texture splitU(2, 1, {red[0], red[1], red[2], blue[0], blue[1], blue[2]});
+    const Texture splitV(1, 2, {red[0], red[1], red[2], blue[0], blue[1], blue[2]});
+
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    viewport.setUseTexture(true);
+    const auto at = [&](const QImage &img, const float u, const float v) {
+        return surfaceAt(img, screenPoint(viewport, surface.evaluate(u, v).P)); // 0 = red, 2 = blue
+    };
+
+    viewport.setTexture(splitU);
+    QImage img = showViewport(viewport, kMeshImageSize);
+    EXPECT_EQ(at(img, 0.25f, 0.5f), 0);
+    EXPECT_EQ(at(img, 0.75f, 0.5f), 2);
+    EXPECT_EQ(at(img, 0.5f, 0.25f), at(img, 0.5f, 0.75f));
+
+    viewport.setTexture(splitV);
+    img = grabImage(viewport);
+    EXPECT_EQ(at(img, 0.5f, 0.25f), 0);
+    EXPECT_EQ(at(img, 0.5f, 0.75f), 2);
+    EXPECT_EQ(at(img, 0.25f, 0.5f), at(img, 0.75f, 0.5f));
+}
+
+TEST(ViewportTextureTest, TextureCoordinatesAreInterpolatedInsideTriangles) {
+    // 20 stripes, mesh vertices every 0.1 = every 2 stripes: the odd stripes lie strictly inside triangles,
+    // so (u, v) taken from a single vertex instead of interpolated would give a neighbouring stripe
+    for (const bool alongU : {true, false}) {
+        SCOPED_TRACE(alongU ? "along u" : "along v");
+        Viewport viewport;
+        showOnlyDiffuseFill(viewport);
+        const BezierSurface surface = textureSquare(viewport);
+        viewport.setSurfaces({surface});
+        viewport.setTexture(stripes(alongU));
+        viewport.setUseTexture(true);
+        const QImage img = showViewport(viewport, kMeshImageSize);
+
+        for (const int k : {1, 3, 7, 11, 15}) {
+            const float t = (static_cast<float>(k) + 0.5f) / kStripes; // centre of stripe k
+            for (const float other : {0.23f, 0.61f}) {
+                const Vec3 P = alongU ? surface.evaluate(t, other).P : surface.evaluate(other, t).P;
+                EXPECT_NEAR(stripeAt(img, screenPoint(viewport, P)), static_cast<float>(k), 0.3f)
+                    << "stripe " << k << ", other parameter " << other;
+            }
+        }
+    }
+}
+
+TEST(ViewportTextureTest, TextureFollowsSurfaceWhenRotated) {
+    // the texture is glued to (u, v): after a drag the same surface point shows the same stripe
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    const BezierSurface surface = textureSquare(viewport);
+    viewport.setSurfaces({surface});
+    viewport.setTexture(stripes(true));
+    viewport.setUseTexture(true);
+    showViewport(viewport, kMeshImageSize);
+    drag(viewport, QPoint(300, 300), QPoint(330, 310));
+    const QImage img = grabImage(viewport);
+
+    for (const int k : {3, 9, 15}) {
+        const float u = (static_cast<float>(k) + 0.5f) / kStripes;
+        EXPECT_NEAR(stripeAt(img, screenPoint(viewport, surface.evaluate(u, 0.5f).P)), static_cast<float>(k), 0.3f)
+            << "stripe " << k;
+    }
+}
+
+TEST(ViewportTextureTest, TextureIsUsedOnEverySurface) {
+    // surface colors differ (red, green, blue); with a green texture all three squares are green
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces(squaresInRow(viewport));
+    viewport.setTexture(solidTexture(QColor(0, 255, 0)));
+    viewport.setUseTexture(true);
+    const QImage img = showViewport(viewport, kMeshImageSize);
+    for (int k = 0; k < 3; ++k)
+        EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[k])), 1) << "surface " << k;
+}
+
+TEST(ViewportTextureTest, SwitchingTextureOffRestoresImage) {
+    Viewport viewport;
+    viewport.setSurfaces(assetSurfaces());
+    const QImage before = showViewport(viewport, kMeshImageSize);
+    viewport.setTexture(stripes(true));
+    viewport.setUseTexture(true);
+    ASSERT_NE(grabImage(viewport), before);
+    viewport.setUseTexture(false);
+    EXPECT_EQ(grabImage(viewport), before);
 }
 
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)

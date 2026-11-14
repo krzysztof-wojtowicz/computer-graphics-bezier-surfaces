@@ -19,6 +19,7 @@
 #include "renderer/ZBuffer.h"
 #include "renderer/Rasterizer.h"
 #include "renderer/Shading.h"
+#include "renderer/Texture.h"
 
 class Viewport : public QWidget {
 public:
@@ -61,6 +62,8 @@ public:
     [[nodiscard]] QColor surfaceColor(int i) const;
     [[nodiscard]] QColor polygonColor(int i) const { return surfaceColor(i).darker(kPolygonDarkness); }
     [[nodiscard]] QColor meshColor(int i) const { return surfaceColor(i).darker(kMeshDarkness); }
+    [[nodiscard]] bool useTexture() const { return m_useTexture; }
+    [[nodiscard]] const Texture &texture() const { return m_texture; }
     /// From the path, not from the shader: valid also before the first render()
     [[nodiscard]] Vec3 lightPosition() const { return m_lightPath.evaluate(m_lightT); }
     [[nodiscard]] float lightT() const { return m_lightT; }
@@ -80,6 +83,9 @@ public:
     void setM(float m);
     void setLightColor(const QColor &color);
     void setSurfaceColor(int i, const QColor &color);
+    /// Object color IO: false = surface colors, true = the texture (on every surface)
+    void setUseTexture(bool use);
+    void setTexture(Texture texture);
     void setLightZ(float z);
     /// Restores the default shape of the light path; keeps its height (set by the z slider) and the light's t
     void resetLightPath();
@@ -117,6 +123,7 @@ private:
     Vec3 m_dragOffset; // point - mouse in scene units, so the point doesn't jump to the cursor when grabbed
     ZBuffer m_zbuffer; // sized in resizeEvent, like m_frame
     Shading m_shader; // shader for fill color calculation with light model
+    Texture m_texture; // 1x1 white until MainWindow sets one; Viewport doesn't load files
     std::array<QColor, kColorCount> m_surfaceColors = kDefaultSurfaceColors; // fill colors, used in turn
     BezierCurve m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, kDefaultLightZ); // light path for animation
 
@@ -129,6 +136,7 @@ private:
     bool m_showPoints = true;
     bool m_showFill = true;
     bool m_showLightPath = false; // off by default: tests check the image of the scene alone
+    bool m_useTexture = false; // off by default: tests see the surface colors
 
     // --- RENDERING ---
     void render();

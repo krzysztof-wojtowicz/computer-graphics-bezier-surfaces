@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <utility>
 
 #include "renderer/MouseRotation.h"
 #include "renderer/Shading.h"
@@ -152,6 +153,20 @@ void Viewport::setSurfaceColor(const int i, const QColor &color) {
     assert(i >= 0 && i < kColorCount && "surface color index out of range!");
     assert(color.isValid() && "invalid surface color!");
     m_surfaceColors[i] = color;
+
+    render();
+    update();
+}
+
+void Viewport::setUseTexture(const bool use) {
+    m_useTexture = use;
+
+    render();
+    update();
+}
+
+void Viewport::setTexture(Texture texture) {
+    m_texture = std::move(texture);
 
     render();
     update();
@@ -478,7 +493,15 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
                     const auto N = interpolate(w, vertices[v1].after.N, vertices[v2].after.N, vertices[v3].after.N);
                     const auto P = interpolate(w, vertices[v1].after.P, vertices[v2].after.P, vertices[v3].after.P);
 
-                    const auto [red, green, blue] = m_shader.calculateColor(sColor, N, P);
+                    // object color: the surface color, or the texture at (u, v) of this pixel
+                    ShadingColor io = sColor;
+                    if (m_useTexture) {
+                        const float u = interpolate(w, vertices[v1].u, vertices[v2].u, vertices[v3].u);
+                        const float v = interpolate(w, vertices[v1].v, vertices[v2].v, vertices[v3].v);
+                        io = m_texture.sample(u, v);
+                    }
+
+                    const auto [red, green, blue] = m_shader.calculateColor(io, N, P);
 
                     reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = qRgb(
                         Shading::float2int(red),
