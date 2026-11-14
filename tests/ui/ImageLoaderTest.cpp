@@ -3,14 +3,18 @@
 #include <QColor>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QRgba64>
+#include <QSet>
 #include <QStringList>
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 
 namespace {
 /// Byte of a channel as the texture returns it (exact: byte / 255 in both places)
@@ -185,4 +189,71 @@ TEST(ImageLoaderTest, NormalMapsPointOutOfSurfaceOnAverage) {
         EXPECT_LT(std::abs(sx / count), 0.1) << path.toStdString();
         EXPECT_LT(std::abs(sy / count), 0.1) << path.toStdString();
     }
+}
+
+// ---------- built-in images (Qt resources) ----------
+
+namespace {
+template<std::size_t N>
+QStringList resourcePaths(const std::array<BuiltInImage, N> &images) {
+    QStringList paths;
+    for (const auto &image: images)
+        paths << QString::fromUtf8(image.path);
+    return paths;
+}
+
+template<std::size_t N>
+QStringList names(const std::array<BuiltInImage, N> &images) {
+    QStringList list;
+    for (const auto &image: images)
+        list << QString::fromUtf8(image.name);
+    return list;
+}
+} // namespace
+
+TEST(BuiltInImagesTest, NamesAreNonEmptyAndUnique) {
+    for (const QStringList &list: {names(kBuiltInTextures), names(kBuiltInNormalMaps)}) {
+        for (const QString &name: list)
+            EXPECT_FALSE(name.isEmpty());
+        EXPECT_EQ(QSet<QString>(list.begin(), list.end()).size(), list.size()) << list.join(", ").toStdString();
+    }
+}
+
+TEST(BuiltInImagesTest, EveryBuiltInImageLoadsFromResourcesLikeTheFileOnDisk) {
+    // a path missing from BEZIER_ASSET_FILES in CMakeLists.txt is not in the resources and fails here
+    for (const QString &path: resourcePaths(kBuiltInTextures) + resourcePaths(kBuiltInNormalMaps)) {
+        SCOPED_TRACE(path.toStdString());
+        ASSERT_TRUE(path.startsWith(":/assets/"));
+        const TextureLoadResult result = loadTexture(path);
+        ASSERT_TRUE(result.texture.has_value()) << result.error.toStdString();
+
+        // ":/assets/x" is src/assets/x: the same image, not a stale or different one
+        const QImage onDisk(QStringLiteral(BEZIER_ASSETS_DIR) + path.mid(QStringLiteral(":/assets").size()));
+        ASSERT_FALSE(onDisk.isNull());
+        EXPECT_EQ(QImage(path).convertToFormat(QImage::Format_RGB32), onDisk.convertToFormat(QImage::Format_RGB32));
+    }
+}
+
+TEST(BuiltInImagesTest, EveryAssetImageIsOnTheBuiltInList) {
+    // an image added to src/assets but forgotten in kBuiltInTextures / kBuiltInNormalMaps
+    const QStringList textures = resourcePaths(kBuiltInTextures);
+    for (const QString &path: assetImages("textures"))
+        EXPECT_TRUE(textures.contains(":/assets/textures/" + QFileInfo(path).fileName())) << path.toStdString();
+
+    const QStringList normalMaps = resourcePaths(kBuiltInNormalMaps);
+    for (const QString &path: assetImages("normal_maps"))
+        EXPECT_TRUE(normalMaps.contains(":/assets/normal_maps/" + QFileInfo(path).fileName())) << path.toStdString();
+}
+
+TEST(BuiltInImagesTest, ListsHaveNoTexturesAmongNormalMapsAndViceVersa) {
+    for (const QString &path: resourcePaths(kBuiltInTextures))
+        EXPECT_TRUE(path.startsWith(":/assets/textures/")) << path.toStdString();
+    for (const QString &path: resourcePaths(kBuiltInNormalMaps))
+        EXPECT_TRUE(path.startsWith(":/assets/normal_maps/")) << path.toStdString();
+}
+
+TEST(BuiltInImagesTest, DefaultTextureAndNormalMapArePair) {
+    // the first entries are the defaults: the floor texture with its own normal map
+    EXPECT_STREQ(kBuiltInTextures.front().path, ":/assets/textures/texture_floor.png");
+    EXPECT_STREQ(kBuiltInNormalMaps.front().path, ":/assets/normal_maps/normal_floor.png");
 }
