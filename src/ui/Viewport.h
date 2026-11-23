@@ -34,7 +34,8 @@ public:
     static constexpr float kDefaultLightZ = 8.0f;
     static constexpr float kLightSpeed = 0.5f; // curve segments per second (4 segments = 8 s per lap)
     static constexpr float kPickRadius = 8; // px: a press this close to a light path point drags it, else rotates
-    /// Surfaces take colors in turn (surface k gets color k % kColorCount); each color is chosen in the panel
+    /// Surfaces take their settings in turn: surface k uses group k % kColorCount (color, visibility,
+    /// texture, normal map), each group has its own tab in the panel
     static constexpr int kColorCount = 3;
     static constexpr std::array<QColor, kColorCount> kDefaultSurfaceColors = {
         QColor(255, 133, 133),
@@ -69,10 +70,11 @@ public:
     [[nodiscard]] bool surfaceVisible(int i) const;
     [[nodiscard]] QColor polygonColor(int i) const { return surfaceColor(i).darker(kPolygonDarkness); }
     [[nodiscard]] QColor meshColor(int i) const { return surfaceColor(i).darker(kMeshDarkness); }
-    [[nodiscard]] bool useTexture() const { return m_useTexture; }
-    [[nodiscard]] const Texture &texture() const { return m_texture; }
-    [[nodiscard]] bool useNormalMap() const { return m_useNormalMap; }
-    [[nodiscard]] const Texture &normalMap() const { return m_normalMap; }
+    /// Object color IO of group i: false = its surface color, true = its texture
+    [[nodiscard]] bool useTexture(int i) const;
+    [[nodiscard]] const Texture &texture(int i) const;
+    [[nodiscard]] bool useNormalMap(int i) const;
+    [[nodiscard]] const Texture &normalMap(int i) const;
     /// From the path, not from the shader: valid also before the first render()
     [[nodiscard]] Vec3 lightPosition() const { return m_lightPath.evaluate(m_lightT); }
     [[nodiscard]] float lightT() const { return m_lightT; }
@@ -93,12 +95,12 @@ public:
     void setLightColor(const QColor &color);
     void setSurfaceColor(int i, const QColor &color);
     void setSurfaceVisible(int i, bool visible);
-    /// Object color IO: false = surface colors, true = the texture (on every surface)
-    void setUseTexture(bool use);
-    void setTexture(Texture texture);
-    /// Normal map, independent of the object color: N = [Pu, Pv, N] * N_map
-    void setUseNormalMap(bool use);
-    void setNormalMap(Texture normalMap);
+    /// Object color IO of group i, independent of the other groups
+    void setUseTexture(int i, bool use);
+    void setTexture(int i, Texture texture);
+    /// Normal map of group i, independent of the object color: N = [Pu, Pv, N] * N_map
+    void setUseNormalMap(int i, bool use);
+    void setNormalMap(int i, Texture normalMap);
     void setLightZ(float z);
     /// Restores the default shape of the light path; keeps its height (set by the z slider) and the light's t
     void resetLightPath();
@@ -128,6 +130,7 @@ private:
     static constexpr QColor kLightPathPolygonColor = QColor(150, 150, 150);
     static constexpr int kAnimationIntervalMs = 16; // ~60 fps, real rate depends on render time
     static constexpr float kMaxAnimationStep = 0.1f; // seconds; avoids a jump after the window was blocked
+    static inline const Texture kFlatNormalMap = Texture(1, 1, {128, 128, 255}); // N_map ~ [0, 0, 1]
 
     // --- STATES ---
     QImage m_frame;
@@ -138,8 +141,9 @@ private:
     Vec3 m_dragOffset; // point - mouse in scene units, so the point doesn't jump to the cursor when grabbed
     ZBuffer m_zbuffer; // sized in resizeEvent, like m_frame
     Shading m_shader; // shader for fill color calculation with light model
-    Texture m_texture; // 1x1 white until MainWindow sets one; Viewport doesn't load files
-    Texture m_normalMap = Texture(1, 1, {128, 128, 255}); // flat (N_map ~ [0, 0, 1]) until MainWindow sets one
+    // per group, like the colors; Viewport doesn't load files, MainWindow sets the images
+    std::array<Texture, kColorCount> m_textures{}; // 1x1 white until MainWindow sets one
+    std::array<Texture, kColorCount> m_normalMaps = {kFlatNormalMap, kFlatNormalMap, kFlatNormalMap};
     std::array<QColor, kColorCount> m_surfaceColors = kDefaultSurfaceColors; // fill colors, used in turn
     std::array<bool, kColorCount> m_surfaceVisible = {true, true, true}; // per color group, like the colors
     BezierCurve m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, kDefaultLightZ); // light path for animation
@@ -153,8 +157,8 @@ private:
     bool m_showPoints = true;
     bool m_showFill = true;
     bool m_showLightPath = false; // off by default: tests check the image of the scene alone
-    bool m_useTexture = false; // off by default: tests see the surface colors
-    bool m_useNormalMap = false;
+    std::array<bool, kColorCount> m_useTexture{}; // off by default: tests see the surface colors
+    std::array<bool, kColorCount> m_useNormalMap{};
 
     // --- RENDERING ---
     void render();
@@ -170,6 +174,7 @@ private:
     void drawPolygon(const Projection &proj, const Mesh &mesh, QPainter &painter, int colorIdx) const;
     void fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, int colorIdx);
     void drawLightPath(const Projection &proj, QPainter &painter) const;
+    void drawLightPathShapes(const Projection &proj, QPainter &painter) const;
 
     // --- LIGHT PATH EDITING ---
     [[nodiscard]] int pickLightPathPoint(const QPointF &pos) const;

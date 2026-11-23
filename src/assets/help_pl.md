@@ -2,13 +2,13 @@
 
 ## O programie
 
-Program wyświetla powierzchnie Béziera trzeciego stopnia wczytane z pliku tekstowego. Każdą powierzchnię dzieli na siatkę trójkątów, obraca całą scenę myszą, wypełnia trójkąty z buforem głębokości (Z-buffer) i oświetla je modelem Lamberta ze składową zwierciadlaną. Źródło światła krąży po zamkniętej, edytowalnej krzywej Béziera. Kolor obiektu może pochodzić z koloru jednolitego albo z tekstury, a wektor normalny można zmodyfikować mapą wektorów normalnych (normal mapą).
+Program wyświetla powierzchnie Béziera trzeciego stopnia wczytane z pliku tekstowego. Każdą powierzchnię dzieli na siatkę trójkątów, obraca całą scenę myszą, wypełnia trójkąty z buforem głębokości (Z-buffer) i oświetla je modelem Lamberta ze składową zwierciadlaną. Źródło światła krąży po zamkniętej, edytowalnej krzywej Béziera. Kolor obiektu może pochodzić z koloru jednolitego albo z tekstury, a wektor normalny można zmodyfikować mapą wektorów normalnych (normal mapą) – osobno dla każdej powierzchni.
 
 ## Szybki start
 
 1. Przeciągnij myszą w obszarze rysowania (lewy przycisk), żeby obrócić scenę.
 2. `Space` zatrzymuje i wznawia ruch światła.
-3. `T` włącza teksturę, `N` włącza normal mapę.
+3. `T` włącza teksturę, `N` włącza normal mapę – na powierzchni z otwartej zakładki „Surface 1”–„Surface 3”.
 4. `R` przywraca początkowy obrót sceny.
 5. `F1` otwiera to okno; przycisk „English” na dole przełącza język pomocy.
 
@@ -32,17 +32,18 @@ Pola wyboru decydują, co jest rysowane:
 | „Triangle fill” | wypełnione, oświetlone trójkąty |
 | „Light path” | krzywą światła, jej wielobok kontrolny, punkty kontrolne i aktualne położenie światła |
 
-### Surfaces
+### Zakładki „Surface 1” – „Surface 3”
 
-- „Surface 1”, „Surface 2”, „Surface 3” – pokazują lub ukrywają powierzchnie. Powierzchnia numer `k` (licząc od 1) należy do grupy `((k−1) mod 3) + 1`: pole „Surface 1” dotyczy powierzchni 1, 4, 7…, „Surface 2” – 2, 5, 8… Ukryta powierzchnia nie zasłania tego, co jest za nią.
-- Próbki kolorów pod polami – kliknięcie otwiera wybór jednolitego koloru tej grupy powierzchni (ten sam wybór jest w menu „Surface”).
+Każda powierzchnia ma własną zakładkę i własne ustawienia, niezależne od pozostałych powierzchni. Powierzchnia numer `k` (licząc od 1) należy do zakładki `((k−1) mod 3) + 1`: zakładka „Surface 1” dotyczy powierzchni 1, 4, 7…, „Surface 2” – 2, 5, 8… W każdej zakładce:
 
-### Surface texture
-
+- „Visible” – pokazuje lub ukrywa powierzchnię. Ukryta powierzchnia nie zasłania tego, co jest za nią.
 - „Solid color” / „Texture” – kolor obiektu `IO` we wzorze oświetlenia: kolor jednolity albo tekstura.
-- Lista tekstur i przycisk „Load...” – wybór wbudowanej tekstury albo wczytanie obrazu z pliku. Wybranie tekstury od razu ją włącza; wczytany plik dopisuje się do listy.
+- Próbka koloru obok „Solid color” – kliknięcie otwiera wybór jednolitego koloru powierzchni (ten sam wybór jest w menu „Surface”).
+- Lista tekstur i przycisk „Load...” obok „Texture” – wybór wbudowanej tekstury albo wczytanie obrazu z pliku. Wybranie tekstury od razu ją włącza; wczytany plik dopisuje się do listy tej powierzchni.
 - „Normal map” – włącza modyfikację wektora normalnego normal mapą, niezależnie od koloru obiektu.
-- Lista normal map i przycisk „Load...” – wybór wbudowanej normal mapy albo wczytanie jej z pliku.
+- Lista normal map i przycisk „Load...” obok „Normal map” – wybór wbudowanej normal mapy albo wczytanie jej z pliku.
+
+Na starcie każda powierzchnia ma kolor jednolity, wybraną pierwszą wbudowaną teksturę („Floor”) i normal mapę („Floor”), a normal mapa jest wyłączona.
 
 ### Lighting
 
@@ -59,15 +60,17 @@ Pola wyboru decydują, co jest rysowane:
 | „File” | „Quit” | zamyka program |
 | „Scene” | „Reset rotation” | przywraca początkowy obrót sceny |
 | „Scene” | „Full screen” | przełącza tryb pełnoekranowy |
-| „Surface” | „Texture” | przełącza kolor obiektu: tekstura / kolor jednolity |
-| „Surface” | „Normal map” | włącza i wyłącza normal mapę |
-| „Surface” | „Load texture...” | wczytuje teksturę z pliku |
-| „Surface” | „Load normal map...” | wczytuje normal mapę z pliku |
+| „Surface” | „Texture” | przełącza kolor obiektu powierzchni z otwartej zakładki: tekstura / kolor jednolity |
+| „Surface” | „Normal map” | włącza i wyłącza normal mapę powierzchni z otwartej zakładki |
+| „Surface” | „Load texture...” | wczytuje z pliku teksturę powierzchni z otwartej zakładki |
+| „Surface” | „Load normal map...” | wczytuje z pliku normal mapę powierzchni z otwartej zakładki |
 | „Surface” | „Surface color 1...” – „Surface color 3...” | wybór jednolitego koloru grupy powierzchni |
 | „Lighting” | „Animate light” | zatrzymuje i wznawia ruch światła |
 | „Lighting” | „Light color...” | wybór koloru światła |
 | „Lighting” | „Reset light path” | przywraca domyślny kształt krzywej światła (wysokość `z` zostaje) |
 | „Help” | „Documentation” | otwiera to okno |
+
+Zaznaczenie pozycji „Texture” i „Normal map” pokazuje stan powierzchni z otwartej zakładki i zmienia się po przełączeniu zakładki.
 
 ## Sterowanie myszą
 
@@ -82,13 +85,13 @@ Na macOS `Ctrl` oznacza klawisz `⌘` (Command), a klawisze funkcyjne mogą wyma
 | Skrót | Działanie |
 |---|---|
 | `Space` | zatrzymanie / wznowienie ruchu światła |
-| `T` | tekstura / kolor jednolity |
-| `N` | normal mapa wł. / wył. |
+| `T` | tekstura / kolor jednolity (powierzchnia z otwartej zakładki) |
+| `N` | normal mapa wł. / wył. (powierzchnia z otwartej zakładki) |
 | `R` | przywrócenie początkowego obrotu sceny |
 | `F11` | pełny ekran (na macOS także `Ctrl+⌘+F`) |
-| `Ctrl+T` | wczytanie tekstury z pliku |
-| `Ctrl+Shift+N` | wczytanie normal mapy z pliku |
-| `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | kolor jednolity grupy powierzchni 1, 2, 3 |
+| `Ctrl+T` | wczytanie tekstury z pliku (powierzchnia z otwartej zakładki) |
+| `Ctrl+Shift+N` | wczytanie normal mapy z pliku (powierzchnia z otwartej zakładki) |
+| `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | kolor jednolity powierzchni 1, 2, 3 |
 | `Ctrl+L` | kolor światła |
 | `Ctrl+R` | przywrócenie domyślnej krzywej światła |
 | `F1` | pomoc (na macOS także `⌘?`) |
@@ -210,6 +213,7 @@ Ujemne cosinusy są zastępowane zerem. Powierzchnie są otwarte, więc oświetl
 
 ### Tekstura i normal mapa
 
+- Każda powierzchnia ma własną teksturę, normal mapę i własne przełączniki; przy wypełnianiu trójkątów powierzchni `k` używane są ustawienia jej zakładki.
 - Tekstura: kolor obiektu `IO` w pikselu to teksel w miejscu interpolowanych `(u, v)`.
 - Normal mapa: kolor teksela `c` daje wektor `Nmapy = 2c − 1` (ze zmienionym znakiem składowej `y`, bo mapy mają `y` w górę obrazu, a `v` rośnie w dół). Zmodyfikowany wektor normalny to `N' = normalize(M · Nmapy)`, gdzie `M = [Pu, Pv, N]` to macierz, której kolumnami są znormalizowane wektory `Pu`, `Pv` i `N`.
 

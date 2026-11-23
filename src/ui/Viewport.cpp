@@ -158,29 +158,53 @@ void Viewport::setSurfaceColor(const int i, const QColor &color) {
     update();
 }
 
-void Viewport::setUseTexture(const bool use) {
-    m_useTexture = use;
+bool Viewport::useTexture(const int i) const {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    return m_useTexture[i];
+}
+
+const Texture &Viewport::texture(const int i) const {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    return m_textures[i];
+}
+
+bool Viewport::useNormalMap(const int i) const {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    return m_useNormalMap[i];
+}
+
+const Texture &Viewport::normalMap(const int i) const {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    return m_normalMaps[i];
+}
+
+void Viewport::setUseTexture(const int i, const bool use) {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    m_useTexture[i] = use;
 
     render();
     update();
 }
 
-void Viewport::setTexture(Texture texture) {
-    m_texture = std::move(texture);
+void Viewport::setTexture(const int i, Texture texture) {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    m_textures[i] = std::move(texture);
 
     render();
     update();
 }
 
-void Viewport::setUseNormalMap(const bool use) {
-    m_useNormalMap = use;
+void Viewport::setUseNormalMap(const int i, const bool use) {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    m_useNormalMap[i] = use;
 
     render();
     update();
 }
 
-void Viewport::setNormalMap(Texture normalMap) {
-    m_normalMap = std::move(normalMap);
+void Viewport::setNormalMap(const int i, Texture normalMap) {
+    assert(i >= 0 && i < kColorCount && "surface group index out of range!");
+    m_normalMaps[i] = std::move(normalMap);
 
     render();
     update();
@@ -495,6 +519,8 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
         .b = Shading::int2float(qBlue(color))
     };
     const auto &vertices = mesh.vertices();
+    const bool useTexture = m_useTexture[colorIdx], useNormalMap = m_useNormalMap[colorIdx];
+    const Texture &texture = m_textures[colorIdx], &normalMap = m_normalMaps[colorIdx];
 
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         const ScreenPoint a = proj.project(vertices[v1].after.P);
@@ -517,15 +543,15 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
                     // object color: the surface color, or the texture at (u, v) of this pixel;
                     // normal: from the surface, or bent by the normal map at (u, v)
                     ShadingColor io = sColor;
-                    if (m_useTexture || m_useNormalMap) {
+                    if (useTexture || useNormalMap) {
                         const float u = interpolate(w, vertices[v1].u, vertices[v2].u, vertices[v3].u);
                         const float v = interpolate(w, vertices[v1].v, vertices[v2].v, vertices[v3].v);
-                        if (m_useTexture)
-                            io = m_texture.sample(u, v);
-                        if (m_useNormalMap) {
+                        if (useTexture)
+                            io = texture.sample(u, v);
+                        if (useNormalMap) {
                             const Vec3 Pu = interpolate(w, vertices[v1].after.Pu, vertices[v2].after.Pu, vertices[v3].after.Pu);
                             const Vec3 Pv = interpolate(w, vertices[v1].after.Pv, vertices[v2].after.Pv, vertices[v3].after.Pv);
-                            N = perturbNormal(Pu, Pv, N, normalFromMap(m_normalMap.sample(u, v)));
+                            N = perturbNormal(Pu, Pv, N, normalFromMap(normalMap.sample(u, v)));
                         }
                     }
 
@@ -542,8 +568,31 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
     }
 }
 
-/// Control polygon under the curve, curve, control points, light on top (no Z-buffer: the light is above the scene)
+/// Control polygon under the curve, curve, control points, light on top.
+/// The whole path lies in the plane z = lightZ(), so one depth serves every pixel: QPainter draws it into an overlay
+/// (keeping antialiasing and dashes) and the Z-buffer erases the hidden pixels before the overlay goes on the frame
 void Viewport::drawLightPath(const Projection &proj, QPainter &painter) const {
+    QImage overlay(m_frame.size(), QImage::Format_ARGB32_Premultiplied);
+    overlay.fill(Qt::transparent);
+    {
+        QPainter overlayPainter(&overlay);
+        overlayPainter.setRenderHint(QPainter::Antialiasing);
+        drawLightPathShapes(proj, overlayPainter);
+    } // destructor ends drawing on overlay
+
+    // larger z is closer to the observer (+z); an empty pixel holds lowest(), so the path stays visible there
+    const float z = lightZ();
+    for (int y = 0; y < overlay.height(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(overlay.scanLine(y));
+        for (int x = 0; x < overlay.width(); ++x)
+            if (row[x] != 0 && m_zbuffer.at(x, y) >= z)
+                row[x] = 0; // fully transparent in a premultiplied format
+    }
+
+    painter.drawImage(0, 0, overlay);
+}
+
+void Viewport::drawLightPathShapes(const Projection &proj, QPainter &painter) const {
     const auto toScreen = [&proj](const Vec3 &p) {
         const ScreenPoint sp = proj.project(p);
         return QPointF(sp.x, sp.y);

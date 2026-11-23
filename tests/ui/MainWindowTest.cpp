@@ -26,6 +26,7 @@
 #include <QMessageBox>
 #include <QRadioButton>
 #include <QStringList>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QApplication>
 #include <QCheckBox>
@@ -47,6 +48,7 @@
 #include <utility>
 #include <cmath>
 #include <tuple>
+#include <vector>
 
 namespace {
 /// Viewport has no Q_OBJECT, so findChild<Viewport *> can't tell it from other widgets: use dynamic_cast
@@ -504,7 +506,7 @@ TEST(MainWindowColorTest, CancelKeepsColorAndDialogStartsFromLastChoice) {
     EXPECT_EQ(swatchColor(*button), QColor(1, 2, 3));
 }
 
-// ---------- 8: texture and normal map ----------
+// ---------- 8: texture and normal map, separate for every surface ----------
 
 namespace {
 /// Texture and normal map have the same controls; the tests run once for each
@@ -513,10 +515,10 @@ struct ImageControls {
     QAbstractButton *enable;   // texture radio / normal map check box
     QComboBox *combo;
     QPushButton *loadButton;
-    QAction *loadAction;
-    bool (MainWindow::*loadFrom)(const QString &);
-    bool (Viewport::*inUse)() const;
-    const Texture &(Viewport::*image)() const;
+    QAction *loadAction;       // in the menu, acts on the open tab
+    bool (MainWindow::*loadFrom)(int, const QString &);
+    bool (Viewport::*inUse)(int) const;
+    const Texture &(Viewport::*image)(int) const;
     QStringList builtInNames;
     QStringList builtInPaths;
 };
@@ -531,17 +533,31 @@ std::pair<QStringList, QStringList> namesAndPaths(const std::array<BuiltInImage,
     return {names, paths};
 }
 
-std::array<ImageControls, 2> findImageControls(const MainWindow &window) {
+/// Controls in the tab of surface i (object names end with i + 1)
+std::array<ImageControls, 2> findImageControls(const MainWindow &window, const int i) {
     const auto [textureNames, texturePaths] = namesAndPaths(kBuiltInTextures);
     const auto [mapNames, mapPaths] = namesAndPaths(kBuiltInNormalMaps);
+    const QString n = QString::number(i + 1);
     return {{
-        {"texture", window.findChild<QRadioButton *>("textureRadio"), window.findChild<QComboBox *>("textureCombo"),
-         window.findChild<QPushButton *>("loadTextureButton"), window.findChild<QAction *>("loadTextureAction"),
+        {"texture", window.findChild<QRadioButton *>("textureRadio" + n), window.findChild<QComboBox *>("textureCombo" + n),
+         window.findChild<QPushButton *>("loadTextureButton" + n), window.findChild<QAction *>("loadTextureAction"),
          &MainWindow::loadTextureFrom, &Viewport::useTexture, &Viewport::texture, textureNames, texturePaths},
-        {"normal map", window.findChild<QCheckBox *>("normalMapCheck"), window.findChild<QComboBox *>("normalMapCombo"),
-         window.findChild<QPushButton *>("loadNormalMapButton"), window.findChild<QAction *>("loadNormalMapAction"),
+        {"normal map", window.findChild<QCheckBox *>("normalMapCheck" + n), window.findChild<QComboBox *>("normalMapCombo" + n),
+         window.findChild<QPushButton *>("loadNormalMapButton" + n), window.findChild<QAction *>("loadNormalMapAction"),
          &MainWindow::loadNormalMapFrom, &Viewport::useNormalMap, &Viewport::normalMap, mapNames, mapPaths},
     }};
+}
+
+QRadioButton *findSolidRadio(const MainWindow &window, const int i) {
+    return window.findChild<QRadioButton *>(QString("solidColorRadio%1").arg(i + 1));
+}
+
+QRadioButton *findTextureRadio(const MainWindow &window, const int i) {
+    return window.findChild<QRadioButton *>(QString("textureRadio%1").arg(i + 1));
+}
+
+QCheckBox *findNormalMapCheck(const MainWindow &window, const int i) {
+    return window.findChild<QCheckBox *>(QString("normalMapCheck%1").arg(i + 1));
 }
 
 void assertControlsFound(const ImageControls &c) {
@@ -593,114 +609,166 @@ QString saveTestImage(const QTemporaryDir &dir, const QString &name) {
     EXPECT_TRUE(image.save(path));
     return path;
 }
+
+/// What the viewport shows for every surface group: texture / normal map on, and the images
+struct GroupState {
+    bool texture, normalMap;
+    Texture textureImage, normalMapImage;
+};
+
+std::array<GroupState, Viewport::kColorCount> groupStates(const Viewport &viewport) {
+    std::array<GroupState, Viewport::kColorCount> states;
+    for (int i = 0; i < Viewport::kColorCount; ++i)
+        states[i] = {viewport.useTexture(i), viewport.useNormalMap(i), viewport.texture(i), viewport.normalMap(i)};
+    return states;
+}
+
+/// Every group other than `changed` is as in `before`
+void expectOtherGroupsUnchanged(const Viewport &viewport, const std::array<GroupState, Viewport::kColorCount> &before,
+                                const int changed) {
+    for (int j = 0; j < Viewport::kColorCount; ++j) {
+        if (j == changed) continue;
+        SCOPED_TRACE(QString("other surface %1").arg(j + 1).toStdString());
+        EXPECT_EQ(viewport.useTexture(j), before[j].texture);
+        EXPECT_EQ(viewport.useNormalMap(j), before[j].normalMap);
+        EXPECT_TRUE(sameTexture(viewport.texture(j), before[j].textureImage));
+        EXPECT_TRUE(sameTexture(viewport.normalMap(j), before[j].normalMapImage));
+    }
+}
 } // namespace
 
 TEST(MainWindowTextureTest, StartsWithSolidColorsAndDefaultImagesLoaded) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
     ASSERT_NE(viewport, nullptr);
-    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
-    ASSERT_NE(solid, nullptr);
-    EXPECT_TRUE(solid->isChecked());
-    for (const ImageControls &c : findImageControls(window)) {
-        SCOPED_TRACE(c.kind);
-        assertControlsFound(c);
-        EXPECT_FALSE(c.enable->isChecked());
-        EXPECT_FALSE((viewport->*c.inUse)());
-        // the list holds the built-in images, the first (default) one is selected and already in the viewport
-        ASSERT_EQ(c.combo->count(), c.builtInNames.size());
-        for (int i = 0; i < c.combo->count(); ++i) {
-            EXPECT_EQ(c.combo->itemText(i), c.builtInNames[i]);
-            EXPECT_EQ(c.combo->itemData(i).toString(), c.builtInPaths[i]);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        QRadioButton *solid = findSolidRadio(window, i);
+        ASSERT_NE(solid, nullptr);
+        EXPECT_TRUE(solid->isChecked());
+        for (const ImageControls &c : findImageControls(window, i)) {
+            SCOPED_TRACE(c.kind);
+            assertControlsFound(c);
+            EXPECT_FALSE(c.enable->isChecked());
+            EXPECT_FALSE((viewport->*c.inUse)(i));
+            // the list holds the built-in images, the first (default) one is selected and already in the viewport
+            ASSERT_EQ(c.combo->count(), c.builtInNames.size());
+            for (int k = 0; k < c.combo->count(); ++k) {
+                EXPECT_EQ(c.combo->itemText(k), c.builtInNames[k]);
+                EXPECT_EQ(c.combo->itemData(k).toString(), c.builtInPaths[k]);
+            }
+            EXPECT_EQ(c.combo->currentIndex(), 0);
+            EXPECT_TRUE(sameTexture((viewport->*c.image)(i), expectedImage(c.builtInPaths[0])));
         }
-        EXPECT_EQ(c.combo->currentIndex(), 0);
-        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(c.builtInPaths[0])));
     }
 }
 
-TEST(MainWindowTextureTest, RadioButtonsSwitchObjectColorSource) {
+TEST(MainWindowTextureTest, RadioButtonsSwitchObjectColorSourceOfTheirSurfaceOnly) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
-    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
-    auto *texture = window.findChild<QRadioButton *>("textureRadio");
     ASSERT_NE(viewport, nullptr);
-    ASSERT_NE(solid, nullptr);
-    ASSERT_NE(texture, nullptr);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        QRadioButton *solid = findSolidRadio(window, i);
+        QRadioButton *texture = findTextureRadio(window, i);
+        ASSERT_NE(solid, nullptr);
+        ASSERT_NE(texture, nullptr);
+        const auto before = groupStates(*viewport);
 
-    texture->click();
-    EXPECT_TRUE(texture->isChecked());
-    EXPECT_FALSE(solid->isChecked()) << "the radio buttons must exclude each other";
-    EXPECT_TRUE(viewport->useTexture());
+        texture->click();
+        EXPECT_TRUE(texture->isChecked());
+        EXPECT_FALSE(solid->isChecked()) << "the radio buttons must exclude each other";
+        EXPECT_TRUE(viewport->useTexture(i));
+        expectOtherGroupsUnchanged(*viewport, before, i);
+        for (int j = 0; j < Viewport::kColorCount; ++j)
+            if (j != i)
+                EXPECT_EQ(findTextureRadio(window, j)->isChecked(), viewport->useTexture(j)) << "radio buttons of "
+                    "different surfaces must not exclude each other";
 
-    solid->click();
-    EXPECT_FALSE(texture->isChecked());
-    EXPECT_FALSE(viewport->useTexture());
+        solid->click();
+        EXPECT_FALSE(texture->isChecked());
+        EXPECT_FALSE(viewport->useTexture(i));
+    }
 }
 
 TEST(MainWindowTextureTest, NormalMapCheckBoxIsIndependentOfObjectColor) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
-    auto *check = window.findChild<QCheckBox *>("normalMapCheck");
-    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    QCheckBox *check = findNormalMapCheck(window, 1);
+    QRadioButton *texture = findTextureRadio(window, 1);
     ASSERT_NE(viewport, nullptr);
     ASSERT_NE(check, nullptr);
     ASSERT_NE(texture, nullptr);
 
     check->click();
-    EXPECT_TRUE(viewport->useNormalMap());
-    EXPECT_FALSE(viewport->useTexture());
+    EXPECT_TRUE(viewport->useNormalMap(1));
+    EXPECT_FALSE(viewport->useTexture(1));
+    EXPECT_FALSE(viewport->useNormalMap(0)) << "only surface 2";
+    EXPECT_FALSE(viewport->useNormalMap(2)) << "only surface 2";
     texture->click();
-    EXPECT_TRUE(viewport->useNormalMap()) << "choosing the texture keeps the normal map";
+    EXPECT_TRUE(viewport->useNormalMap(1)) << "choosing the texture keeps the normal map";
     check->click();
-    EXPECT_FALSE(viewport->useNormalMap());
-    EXPECT_TRUE(viewport->useTexture()) << "switching the normal map off keeps the texture";
+    EXPECT_FALSE(viewport->useNormalMap(1));
+    EXPECT_TRUE(viewport->useTexture(1)) << "switching the normal map off keeps the texture";
 }
 
-TEST(MainWindowTextureTest, ChoosingFromListLoadsImageAndSwitchesItOn) {
+TEST(MainWindowTextureTest, ChoosingFromListLoadsImageAndSwitchesItOnForItsSurface) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
     ASSERT_NE(viewport, nullptr);
-    for (const ImageControls &c : findImageControls(window)) {
-        SCOPED_TRACE(c.kind);
-        assertControlsFound(c);
-        for (int i = c.combo->count() - 1; i >= 0; --i) { // backwards: index 0 is selected already
-            c.combo->setCurrentIndex(i);
-            EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(c.builtInPaths[i]))) << "item " << i;
-            EXPECT_TRUE(c.enable->isChecked());
-            EXPECT_TRUE((viewport->*c.inUse)());
-            EXPECT_EQ(c.combo->count(), c.builtInNames.size()) << "a built-in item must not be added again";
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        for (const ImageControls &c : findImageControls(window, i)) {
+            SCOPED_TRACE(c.kind);
+            assertControlsFound(c);
+            const auto before = groupStates(*viewport);
+            for (int k = c.combo->count() - 1; k >= 0; --k) { // backwards: index 0 is selected already
+                c.combo->setCurrentIndex(k);
+                EXPECT_TRUE(sameTexture((viewport->*c.image)(i), expectedImage(c.builtInPaths[k]))) << "item " << k;
+                EXPECT_TRUE(c.enable->isChecked());
+                EXPECT_TRUE((viewport->*c.inUse)(i));
+                EXPECT_EQ(c.combo->count(), c.builtInNames.size()) << "a built-in item must not be added again";
+            }
+            expectOtherGroupsUnchanged(*viewport, before, i);
         }
     }
 }
 
-TEST(MainWindowTextureTest, LoadingFileUsesItAndAddsItToList) {
+TEST(MainWindowTextureTest, LoadingFileUsesItAndAddsItToListOfItsSurface) {
     const QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     MainWindow window;
     const Viewport *viewport = findViewport(window);
     ASSERT_NE(viewport, nullptr);
-    for (const ImageControls &c : findImageControls(window)) {
+    constexpr int i = 2;
+    for (std::size_t kind = 0; kind < 2; ++kind) {
+        const ImageControls c = findImageControls(window, i)[kind];
         SCOPED_TRACE(c.kind);
         assertControlsFound(c);
         const QString path = saveTestImage(dir, QString(c.kind).replace(' ', '_') + ".png");
         const int builtIn = static_cast<int>(c.combo->count());
+        const auto before = groupStates(*viewport);
 
-        EXPECT_TRUE((window.*c.loadFrom)(path));
-        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(path)));
+        EXPECT_TRUE((window.*c.loadFrom)(i, path));
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(i), expectedImage(path)));
         EXPECT_TRUE(c.enable->isChecked());
-        EXPECT_TRUE((viewport->*c.inUse)());
+        EXPECT_TRUE((viewport->*c.inUse)(i));
         ASSERT_EQ(c.combo->count(), builtIn + 1);
         EXPECT_EQ(c.combo->currentIndex(), builtIn);
         EXPECT_EQ(c.combo->currentText(), QFileInfo(path).fileName());
+        expectOtherGroupsUnchanged(*viewport, before, i);
+        for (int j = 0; j < i; ++j)
+            EXPECT_EQ(findImageControls(window, j)[kind].combo->count(), builtIn)
+                << "the file is added only to the list of surface " << i + 1;
 
         // back to a built-in image and then to the file again from the list
         c.combo->setCurrentIndex(0);
-        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(c.builtInPaths[0])));
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(i), expectedImage(c.builtInPaths[0])));
         c.combo->setCurrentIndex(builtIn);
-        EXPECT_TRUE(sameTexture((viewport->*c.image)(), expectedImage(path)));
+        EXPECT_TRUE(sameTexture((viewport->*c.image)(i), expectedImage(path)));
 
         // loading the same file again selects its item instead of adding another one
-        EXPECT_TRUE((window.*c.loadFrom)(path));
+        EXPECT_TRUE((window.*c.loadFrom)(i, path));
         EXPECT_EQ(c.combo->count(), builtIn + 1);
     }
 }
@@ -717,40 +785,43 @@ TEST(MainWindowTextureTest, FailedLoadShowsWarningAndChangesNothing) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
     ASSERT_NE(viewport, nullptr);
-    for (const ImageControls &c : findImageControls(window)) {
+    for (const ImageControls &c : findImageControls(window, 0)) {
         SCOPED_TRACE(c.kind);
         assertControlsFound(c);
         c.combo->setCurrentIndex(1); // something else than the start, switched on
-        const Texture before = (viewport->*c.image)();
+        const Texture before = (viewport->*c.image)(0);
         for (const QString &path : {notImage, dir.filePath("missing.png")}) {
             bool loaded = true;
-            answerWarning([&] { loaded = (window.*c.loadFrom)(path); }, path);
+            answerWarning([&] { loaded = (window.*c.loadFrom)(0, path); }, path);
             EXPECT_FALSE(loaded) << path.toStdString();
-            EXPECT_TRUE(sameTexture((viewport->*c.image)(), before));
+            EXPECT_TRUE(sameTexture((viewport->*c.image)(0), before));
             EXPECT_EQ(c.combo->count(), c.builtInNames.size());
             EXPECT_EQ(c.combo->currentIndex(), 1);
-            EXPECT_TRUE((viewport->*c.inUse)());
+            EXPECT_TRUE((viewport->*c.inUse)(0));
         }
     }
 }
 
-TEST(MainWindowTextureTest, LoadButtonsAndMenuActionsExist) {
+TEST(MainWindowTextureTest, LoadButtonsInEveryTabAndMenuActionsExist) {
     MainWindow window;
-    for (const ImageControls &c : findImageControls(window)) {
-        SCOPED_TRACE(c.kind);
-        assertControlsFound(c);
-        EXPECT_EQ(c.loadButton->text(), "Load..."); // next to the list, which says what is loaded
-        EXPECT_EQ(c.loadButton->toolTip(), QString("Load %1 from a file").arg(c.kind));
-        EXPECT_EQ(c.loadAction->text(), QString("Load %1...").arg(c.kind));
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        for (const ImageControls &c : findImageControls(window, i)) {
+            SCOPED_TRACE(c.kind);
+            assertControlsFound(c);
+            EXPECT_EQ(c.loadButton->text(), "Load..."); // next to the list, which says what is loaded
+            EXPECT_EQ(c.loadButton->toolTip(), QString("Load %1 from a file").arg(c.kind));
+            EXPECT_EQ(c.loadAction->text(), QString("Load %1...").arg(c.kind));
+        }
     }
 }
 
 TEST(MainWindowTextureTest, TextureStaysChosenWhenSwitchingToSolidColorAndBack) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
-    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
-    auto *texture = window.findChild<QRadioButton *>("textureRadio");
-    auto *combo = window.findChild<QComboBox *>("textureCombo");
+    QRadioButton *solid = findSolidRadio(window, 1);
+    QRadioButton *texture = findTextureRadio(window, 1);
+    auto *combo = window.findChild<QComboBox *>("textureCombo2");
     ASSERT_NE(viewport, nullptr);
     ASSERT_NE(solid, nullptr);
     ASSERT_NE(texture, nullptr);
@@ -759,7 +830,7 @@ TEST(MainWindowTextureTest, TextureStaysChosenWhenSwitchingToSolidColorAndBack) 
     solid->click();
     texture->click();
     EXPECT_EQ(combo->currentIndex(), 1);
-    EXPECT_TRUE(sameTexture(viewport->texture(), expectedImage(QString::fromUtf8(kBuiltInTextures[1].path))));
+    EXPECT_TRUE(sameTexture(viewport->texture(1), expectedImage(QString::fromUtf8(kBuiltInTextures[1].path))));
 }
 
 // ---------- 8b.1: surface colors from the menu ----------
@@ -889,50 +960,103 @@ TEST(MainWindowShortcutTest, AnimationActionAndButtonStayInSync) {
     EXPECT_TRUE(action->isChecked());
 }
 
-TEST(MainWindowShortcutTest, TextureActionAndRadioButtonsStayInSync) {
+TEST(MainWindowShortcutTest, TextureActionAndRadioButtonsOfOpenTabStayInSync) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
     auto *action = window.findChild<QAction *>("textureAction");
-    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
-    auto *texture = window.findChild<QRadioButton *>("textureRadio");
+    auto *tabs = window.findChild<QTabWidget *>("surfaceTabs");
     ASSERT_NE(viewport, nullptr);
     ASSERT_NE(action, nullptr);
-    ASSERT_NE(solid, nullptr);
-    ASSERT_NE(texture, nullptr);
+    ASSERT_NE(tabs, nullptr);
     EXPECT_FALSE(action->isChecked());
 
-    action->trigger();
-    EXPECT_TRUE(viewport->useTexture());
-    EXPECT_TRUE(texture->isChecked());
-    action->trigger();
-    EXPECT_FALSE(viewport->useTexture());
-    EXPECT_TRUE(solid->isChecked());
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        tabs->setCurrentIndex(i);
+        EXPECT_EQ(window.currentSurface(), i);
+        QRadioButton *solid = findSolidRadio(window, i);
+        QRadioButton *texture = findTextureRadio(window, i);
+        ASSERT_NE(solid, nullptr);
+        ASSERT_NE(texture, nullptr);
+        const auto before = groupStates(*viewport);
 
-    texture->click();
-    EXPECT_TRUE(action->isChecked());
-    solid->click();
-    EXPECT_FALSE(action->isChecked());
-    // choosing a texture from the list switches it on: the menu shows that too
-    window.findChild<QComboBox *>("textureCombo")->setCurrentIndex(1);
-    EXPECT_TRUE(action->isChecked());
+        action->trigger();
+        EXPECT_TRUE(viewport->useTexture(i));
+        EXPECT_TRUE(texture->isChecked());
+        expectOtherGroupsUnchanged(*viewport, before, i);
+        action->trigger();
+        EXPECT_FALSE(viewport->useTexture(i));
+        EXPECT_TRUE(solid->isChecked());
+
+        texture->click();
+        EXPECT_TRUE(action->isChecked());
+        solid->click();
+        EXPECT_FALSE(action->isChecked());
+        // choosing a texture from the list switches it on: the menu shows that too
+        window.findChild<QComboBox *>(QString("textureCombo%1").arg(i + 1))->setCurrentIndex(1);
+        EXPECT_TRUE(action->isChecked());
+        solid->click();
+    }
 }
 
-TEST(MainWindowShortcutTest, NormalMapActionAndCheckBoxStayInSync) {
+TEST(MainWindowShortcutTest, SurfaceActionsShowStateOfOpenTab) {
+    // texture on surface 2 only, normal map on surface 3 only: the checks follow the tab that is open
+    MainWindow window;
+    auto *textureAction = window.findChild<QAction *>("textureAction");
+    auto *normalMapAction = window.findChild<QAction *>("normalMapAction");
+    auto *tabs = window.findChild<QTabWidget *>("surfaceTabs");
+    ASSERT_NE(textureAction, nullptr);
+    ASSERT_NE(normalMapAction, nullptr);
+    ASSERT_NE(tabs, nullptr);
+    ASSERT_EQ(tabs->currentIndex(), 0);
+    findTextureRadio(window, 1)->click();
+    findNormalMapCheck(window, 2)->click();
+    EXPECT_FALSE(textureAction->isChecked()) << "a hidden tab doesn't change the menu";
+    EXPECT_FALSE(normalMapAction->isChecked());
+
+    tabs->setCurrentIndex(1);
+    EXPECT_TRUE(textureAction->isChecked());
+    EXPECT_FALSE(normalMapAction->isChecked());
+    tabs->setCurrentIndex(2);
+    EXPECT_FALSE(textureAction->isChecked());
+    EXPECT_TRUE(normalMapAction->isChecked());
+    tabs->setCurrentIndex(0);
+    EXPECT_FALSE(textureAction->isChecked());
+    EXPECT_FALSE(normalMapAction->isChecked());
+
+    // showing the state of a tab must not change any surface
+    EXPECT_TRUE(findTextureRadio(window, 1)->isChecked());
+    EXPECT_FALSE(findTextureRadio(window, 0)->isChecked());
+    EXPECT_FALSE(findTextureRadio(window, 2)->isChecked());
+    EXPECT_TRUE(findNormalMapCheck(window, 2)->isChecked());
+    EXPECT_FALSE(findNormalMapCheck(window, 1)->isChecked());
+}
+
+TEST(MainWindowShortcutTest, NormalMapActionAndCheckBoxOfOpenTabStayInSync) {
     MainWindow window;
     const Viewport *viewport = findViewport(window);
     auto *action = window.findChild<QAction *>("normalMapAction");
-    auto *check = window.findChild<QCheckBox *>("normalMapCheck");
+    auto *tabs = window.findChild<QTabWidget *>("surfaceTabs");
     ASSERT_NE(viewport, nullptr);
     ASSERT_NE(action, nullptr);
-    ASSERT_NE(check, nullptr);
+    ASSERT_NE(tabs, nullptr);
     EXPECT_FALSE(action->isChecked());
 
-    action->trigger();
-    EXPECT_TRUE(viewport->useNormalMap());
-    EXPECT_TRUE(check->isChecked());
-    check->click();
-    EXPECT_FALSE(viewport->useNormalMap());
-    EXPECT_FALSE(action->isChecked());
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        tabs->setCurrentIndex(i);
+        QCheckBox *check = findNormalMapCheck(window, i);
+        ASSERT_NE(check, nullptr);
+        const auto before = groupStates(*viewport);
+
+        action->trigger();
+        EXPECT_TRUE(viewport->useNormalMap(i));
+        EXPECT_TRUE(check->isChecked());
+        expectOtherGroupsUnchanged(*viewport, before, i);
+        check->click();
+        EXPECT_FALSE(viewport->useNormalMap(i));
+        EXPECT_FALSE(action->isChecked());
+    }
 }
 
 TEST(MainWindowShortcutTest, ResetRotationActionRestoresInitialView) {
@@ -974,7 +1098,7 @@ TEST(MainWindowShortcutTest, KeysWorkWhateverControlHasFocus) {
     ASSERT_TRUE(showActive(window));
     Viewport *viewport = findViewport(window);
     auto *animationButton = window.findChild<QPushButton *>("animationButton");
-    auto *combo = window.findChild<QComboBox *>("textureCombo");
+    auto *combo = window.findChild<QComboBox *>("textureCombo1"); // in the tab that is open
     auto *slider = window.findChild<QSlider *>("kdSlider");
     ASSERT_NE(viewport, nullptr);
     ASSERT_NE(animationButton, nullptr);
@@ -992,13 +1116,13 @@ TEST(MainWindowShortcutTest, KeysWorkWhateverControlHasFocus) {
         QTest::keyClick(focus, Qt::Key_Space);
         EXPECT_NE(viewport->isAnimating(), animating) << "Space";
 
-        const bool texture = viewport->useTexture();
+        const bool texture = viewport->useTexture(0);
         QTest::keyClick(focus, Qt::Key_T);
-        EXPECT_NE(viewport->useTexture(), texture) << "T";
+        EXPECT_NE(viewport->useTexture(0), texture) << "T";
 
-        const bool normalMap = viewport->useNormalMap();
+        const bool normalMap = viewport->useNormalMap(0);
         QTest::keyClick(focus, Qt::Key_N);
-        EXPECT_NE(viewport->useNormalMap(), normalMap) << "N";
+        EXPECT_NE(viewport->useNormalMap(0), normalMap) << "N";
 
         dragScene(viewport);
         ASSERT_NE(viewport->rotation().m, Viewport::initialRotation().m);
@@ -1117,35 +1241,49 @@ TEST(MainWindowLayoutTest, DisplayCheckBoxesInTwoColumns) {
     EXPECT_TRUE(sameRow(window, findCheckBox(window, "Bezier polygon"), findCheckBox(window, "Triangle mesh")));
 }
 
-TEST(MainWindowLayoutTest, SurfaceColorSwatchesInOneRow) {
+TEST(MainWindowLayoutTest, SurfaceTabControlsShareRows) {
+    // in every tab: [Visible], [Solid color | swatch], [Texture | list | Load...], [Normal map | list | Load...]
     MainWindow window;
     window.show();
     QCoreApplication::processEvents();
-    QPushButton *first = findSurfaceColorButton(window, 0);
-    ASSERT_NE(first, nullptr);
-    for (int i = 1; i < Viewport::kColorCount; ++i) {
-        QPushButton *button = findSurfaceColorButton(window, i);
-        ASSERT_NE(button, nullptr);
-        EXPECT_TRUE(sameRow(window, first, button)) << "button " << i;
-        EXPECT_GT(inWindow(window, button).left(), inWindow(window, findSurfaceColorButton(window, i - 1)).left());
+    auto *tabs = window.findChild<QTabWidget *>("surfaceTabs");
+    ASSERT_NE(tabs, nullptr);
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        tabs->setCurrentIndex(i); // only the open tab is laid out
+        QCoreApplication::processEvents();
+        auto *visible = window.findChild<QCheckBox *>(QString("surfaceVisibleCheck%1").arg(i + 1));
+        QRadioButton *solid = findSolidRadio(window, i);
+        QPushButton *swatch = findSurfaceColorButton(window, i);
+        ASSERT_NE(visible, nullptr);
+        ASSERT_NE(solid, nullptr);
+        ASSERT_NE(swatch, nullptr);
+        EXPECT_LT(inWindow(window, visible).bottom(), inWindow(window, solid).top()) << "Visible above the colors";
+        EXPECT_TRUE(sameRow(window, solid, swatch));
+        EXPECT_GT(inWindow(window, swatch).left(), inWindow(window, solid).left()) << "swatch right of Solid color";
+        int lastRowTop = inWindow(window, solid).top();
+        for (const ImageControls &c : findImageControls(window, i)) {
+            SCOPED_TRACE(c.kind);
+            assertControlsFound(c);
+            EXPECT_TRUE(sameRow(window, c.enable, c.combo));
+            EXPECT_TRUE(sameRow(window, c.combo, c.loadButton));
+            EXPECT_GT(inWindow(window, c.combo).left(), inWindow(window, c.enable).left()) << "list right of the switch";
+            EXPECT_GT(inWindow(window, c.loadButton).left(), inWindow(window, c.combo).right()) << "Load... right of the list";
+            EXPECT_GT(inWindow(window, c.enable).top(), lastRowTop) << "rows in order";
+            lastRowTop = inWindow(window, c.enable).top();
+        }
     }
 }
 
-TEST(MainWindowLayoutTest, SurfaceControlsShareRows) {
+TEST(MainWindowLayoutTest, PanelFitsInDefaultWindow) {
+    // everything is visible without scrolling: the last control ends above the bottom of the window
     MainWindow window;
     window.show();
     QCoreApplication::processEvents();
-    auto *solid = window.findChild<QRadioButton *>("solidColorRadio");
-    auto *texture = window.findChild<QRadioButton *>("textureRadio");
-    ASSERT_NE(solid, nullptr);
-    ASSERT_NE(texture, nullptr);
-    EXPECT_TRUE(sameRow(window, solid, texture));
-    for (const ImageControls &c : findImageControls(window)) {
-        SCOPED_TRACE(c.kind);
-        assertControlsFound(c);
-        EXPECT_TRUE(sameRow(window, c.combo, c.loadButton));
-        EXPECT_GT(inWindow(window, c.loadButton).left(), inWindow(window, c.combo).right()) << "Load... right of the list";
-    }
+    auto *animation = window.findChild<QPushButton *>("animationButton");
+    ASSERT_NE(animation, nullptr);
+    EXPECT_LE(inWindow(window, animation).bottom(), window.centralWidget()->geometry().bottom());
+    EXPECT_LE(window.height(), 800) << "the window didn't have to grow for the panel";
 }
 
 TEST(MainWindowLayoutTest, LightColorAndAnimationButtonsShareRowHalfEach) {
@@ -1162,14 +1300,33 @@ TEST(MainWindowLayoutTest, LightColorAndAnimationButtonsShareRowHalfEach) {
 
 // ---------- surfaces group: visibility switches ----------
 
-TEST(MainWindowSurfacesTest, GroupsAreRenamed) {
+TEST(MainWindowSurfacesTest, OneTabPerSurface) {
     MainWindow window;
+    auto *tabs = window.findChild<QTabWidget *>("surfaceTabs");
+    ASSERT_NE(tabs, nullptr);
+    ASSERT_EQ(tabs->count(), Viewport::kColorCount);
+    for (int i = 0; i < Viewport::kColorCount; ++i)
+        EXPECT_EQ(tabs->tabText(i), QString("Surface %1").arg(i + 1));
+    EXPECT_EQ(tabs->currentIndex(), 0);
+    EXPECT_EQ(window.currentSurface(), 0);
+
+    // every control of a surface lives in its own tab
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        QWidget *tab = tabs->widget(i);
+        const QString n = QString::number(i + 1);
+        for (const QString &name : {"surfaceVisibleCheck", "solidColorRadio", "surfaceColorButton", "textureRadio",
+                                    "textureCombo", "loadTextureButton", "normalMapCheck", "normalMapCombo",
+                                    "loadNormalMapButton"})
+            EXPECT_NE(tab->findChild<QWidget *>(name + n), nullptr) << name.toStdString() << n.toStdString();
+    }
+
+    // the old shared groups are gone
     QStringList titles;
     for (QGroupBox *box : window.findChildren<QGroupBox *>())
         titles << box->title();
-    EXPECT_TRUE(titles.contains("Surfaces")) << titles.join(", ").toStdString();
-    EXPECT_TRUE(titles.contains("Surface texture")) << titles.join(", ").toStdString();
-    EXPECT_FALSE(titles.contains("Surface colors"));
+    EXPECT_FALSE(titles.contains("Surface texture")) << titles.join(", ").toStdString();
+    EXPECT_FALSE(titles.contains("Surfaces"));
 }
 
 TEST(MainWindowSurfacesTest, EveryCheckBoxStartsCheckedAndTogglesOnlyItsGroup) {
@@ -1180,7 +1337,7 @@ TEST(MainWindowSurfacesTest, EveryCheckBoxStartsCheckedAndTogglesOnlyItsGroup) {
         SCOPED_TRACE(i);
         auto *box = window.findChild<QCheckBox *>(QString("surfaceVisibleCheck%1").arg(i + 1));
         ASSERT_NE(box, nullptr);
-        EXPECT_EQ(box->text(), QString("Surface %1").arg(i + 1));
+        EXPECT_EQ(box->text(), "Visible");
         EXPECT_TRUE(box->isChecked());
         box->click();
         for (int j = 0; j < Viewport::kColorCount; ++j)
@@ -1190,20 +1347,25 @@ TEST(MainWindowSurfacesTest, EveryCheckBoxStartsCheckedAndTogglesOnlyItsGroup) {
     }
 }
 
-TEST(MainWindowSurfacesTest, CheckBoxesInOneRowAboveTheirSwatches) {
+TEST(MainWindowSurfacesTest, EverySurfaceCanHaveItsOwnLook) {
+    // surface 1: solid color, surface 2: texture "Pipes", surface 3: texture "Floor" + normal map "Bricks"
     MainWindow window;
-    window.show();
-    QCoreApplication::processEvents();
-    for (int i = 0; i < Viewport::kColorCount; ++i) {
-        SCOPED_TRACE(i);
-        auto *box = window.findChild<QCheckBox *>(QString("surfaceVisibleCheck%1").arg(i + 1));
-        QPushButton *swatch = findSurfaceColorButton(window, i);
-        ASSERT_NE(box, nullptr);
-        ASSERT_NE(swatch, nullptr);
-        EXPECT_TRUE(sameRow(window, box, window.findChild<QCheckBox *>("surfaceVisibleCheck1")));
-        EXPECT_LT(inWindow(window, box).bottom(), inWindow(window, swatch).top()) << "check box above its swatch";
-        EXPECT_NEAR(inWindow(window, box).left(), inWindow(window, swatch).left(), 3) << "same column";
-    }
+    const Viewport *viewport = findViewport(window);
+    ASSERT_NE(viewport, nullptr);
+    window.findChild<QComboBox *>("textureCombo2")->setCurrentIndex(1);
+    findTextureRadio(window, 2)->click();
+    window.findChild<QComboBox *>("normalMapCombo3")->setCurrentIndex(1);
+
+    EXPECT_FALSE(viewport->useTexture(0));
+    EXPECT_FALSE(viewport->useNormalMap(0));
+    EXPECT_TRUE(viewport->useTexture(1));
+    EXPECT_FALSE(viewport->useNormalMap(1));
+    EXPECT_TRUE(sameTexture(viewport->texture(1), expectedImage(QString::fromUtf8(kBuiltInTextures[1].path))));
+    EXPECT_TRUE(viewport->useTexture(2));
+    EXPECT_TRUE(viewport->useNormalMap(2));
+    EXPECT_TRUE(sameTexture(viewport->texture(2), expectedImage(QString::fromUtf8(kBuiltInTextures[0].path))));
+    EXPECT_TRUE(sameTexture(viewport->normalMap(2), expectedImage(QString::fromUtf8(kBuiltInNormalMaps[1].path))));
+    EXPECT_TRUE(sameTexture(viewport->normalMap(1), expectedImage(QString::fromUtf8(kBuiltInNormalMaps[0].path))));
 }
 
 // ---------- documentation (help window) ----------
@@ -1285,6 +1447,9 @@ TEST(MainWindowHelpTest, EveryMenuItemAndPanelControlIsDocumentedInBothLanguages
     for (QGroupBox *group : window.findChildren<QGroupBox *>()) texts << group->title();
     for (QCheckBox *box : window.findChildren<QCheckBox *>()) texts << box->text();
     for (QRadioButton *radio : window.findChildren<QRadioButton *>()) texts << radio->text();
+    auto *tabs = window.findChild<QTabWidget *>("surfaceTabs");
+    ASSERT_NE(tabs, nullptr);
+    for (int i = 0; i < tabs->count(); ++i) texts << tabs->tabText(i);
     for (const QString &button : {"Load...", "Light color...", "Stop animation", "Start animation"}) texts << button;
     texts.removeDuplicates();
     ASSERT_GT(texts.size(), 30);
@@ -1292,8 +1457,9 @@ TEST(MainWindowHelpTest, EveryMenuItemAndPanelControlIsDocumentedInBothLanguages
     for (const HelpLanguage language : kHelpLanguages) {
         const QString help = helpText(language);
         for (const QString &text : texts) {
-            // "Surface color 2..." is documented as the range "Surface color 1..." – "Surface color 3..."
-            if (text.startsWith("Surface color 2")) continue;
+            // "Surface color 2..." is documented as the range "Surface color 1..." – "Surface color 3...",
+            // the tabs as "Surface 1" – "Surface 3"
+            if (text.startsWith("Surface color 2") || text == "Surface 2") continue;
             EXPECT_TRUE(help.contains(text)) << (language == HelpLanguage::Polish ? "Polish" : "English") << ": \""
                                              << text.toStdString() << "\"";
         }

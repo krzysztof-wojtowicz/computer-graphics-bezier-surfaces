@@ -1437,6 +1437,63 @@ TEST(ViewportLightPathTest, ControlPolygonAndPointsAreDrawn) {
     }
 }
 
+namespace {
+// Anchor over the test square: not P0, where the light (t = 0) is, as its marker would cover the anchor
+constexpr int kCoveredAnchor = 3;
+
+/// Flat square at view-space depth z (after the viewport's rotation) around light path point kCoveredAnchor,
+/// so the anchor lies over the fill and the Z-buffer decides whether the path is in front of it
+BezierSurface squareUnderCoveredAnchor(const Viewport &viewport, const float z) {
+    const Vec3 p0 = viewport.lightPath().point(kCoveredAnchor);
+    const Mat3 toObject = viewport.rotation().transposed(); // inverse of an orthonormal rotation
+    constexpr float halfSide = 0.6f;
+    BezierSurface::ControlGrid g;
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            g[i][j] = toObject * Vec3{.x = p0.x - halfSide + 2.0f * halfSide * static_cast<float>(i) / 3.0f,
+                                      .y = p0.y - halfSide + 2.0f * halfSide * static_cast<float>(j) / 3.0f,
+                                      .z = z};
+    return BezierSurface(g);
+}
+
+/// Fill and light path visible, light path at height lightZ, a square at depth 2 under kCoveredAnchor;
+/// returns the images with and without the light path
+std::pair<QImage, QImage> renderPathOverSquare(Viewport &viewport, const float lightZ) {
+    showOnlyLightPath(viewport);
+    viewport.setShowFill(true);
+    viewport.setSurfaces({squareUnderCoveredAnchor(viewport, 2.0f)});
+    viewport.setLightZ(lightZ);
+    const QImage withPath = grabImage(viewport);
+    viewport.setShowLightPath(false);
+    const QImage withoutPath = grabImage(viewport);
+    return {withPath, withoutPath};
+}
+} // namespace
+
+TEST(ViewportLightPathTest, PathBehindSurfaceIsHiddenByZBuffer) {
+    Viewport viewport;
+    const auto [withPath, withoutPath] = renderPathOverSquare(viewport, 1.0f);
+    const QPointF anchor = pathPointOnScreen(viewport, kCoveredAnchor);
+    EXPECT_TRUE(drawnAt(withoutPath, anchor)) << "the square must cover the anchor";
+    EXPECT_TRUE(sameAround(withPath, withoutPath, anchor)) << "anchor below the surface drawn over it";
+}
+
+TEST(ViewportLightPathTest, PathInFrontOfSurfaceIsDrawn) {
+    Viewport viewport;
+    const auto [withPath, withoutPath] = renderPathOverSquare(viewport, 3.0f);
+    const QPointF anchor = pathPointOnScreen(viewport, kCoveredAnchor);
+    EXPECT_TRUE(drawnAt(withoutPath, anchor)) << "the square must cover the anchor";
+    EXPECT_FALSE(sameAround(withPath, withoutPath, anchor)) << "anchor above the surface hidden";
+}
+
+TEST(ViewportLightPathTest, LowPathIsDrawnWhereNoSurfaceIsBehindIt) {
+    // away from the square the Z-buffer is empty, so the rest of the path is drawn even below the square
+    Viewport viewport;
+    const QImage withPath = renderPathOverSquare(viewport, 1.0f).first;
+    const int opposite = (kCoveredAnchor + 6) % viewport.lightPath().size(); // other side of the 4-segment circle
+    EXPECT_TRUE(dotAt(withPath, pathPointOnScreen(viewport, opposite)));
+}
+
 TEST(ViewportLightPathTest, DragNearPointMovesItByMouseDeltaWithoutRotating) {
     Viewport viewport;
     showOnlyLightPath(viewport);
@@ -1826,10 +1883,10 @@ BezierSurface textureSquare(const Viewport &viewport) {
 
 TEST(ViewportTextureTest, OffByDefaultWithWhiteTexture) {
     const Viewport viewport;
-    EXPECT_FALSE(viewport.useTexture());
-    EXPECT_EQ(viewport.texture().width(), 1);
-    EXPECT_EQ(viewport.texture().height(), 1);
-    const ShadingColor c = viewport.texture().texel(0, 0);
+    EXPECT_FALSE(viewport.useTexture(0));
+    EXPECT_EQ(viewport.texture(0).width(), 1);
+    EXPECT_EQ(viewport.texture(0).height(), 1);
+    const ShadingColor c = viewport.texture(0).texel(0, 0);
     EXPECT_FLOAT_EQ(c.r, 1.0f);
     EXPECT_FLOAT_EQ(c.g, 1.0f);
     EXPECT_FLOAT_EQ(c.b, 1.0f);
@@ -1843,16 +1900,16 @@ TEST(ViewportTextureTest, SettersStoreValuesAndRedraw) {
     const QPointF p = sceneToScreen({0.0f, 0.0f, 0.0f});
     const QColor initial = colorAt(showViewport(viewport, kMeshImageSize), p);
 
-    viewport.setTexture(solidTexture(QColor(0, 0, 255)));
-    EXPECT_EQ(viewport.texture().texel(0, 0).b, 1.0f);
+    viewport.setTexture(0, solidTexture(QColor(0, 0, 255)));
+    EXPECT_EQ(viewport.texture(0).texel(0, 0).b, 1.0f);
     EXPECT_EQ(colorAt(grabImage(viewport), p), initial) << "texture set but not used yet";
 
-    viewport.setUseTexture(true);
-    EXPECT_TRUE(viewport.useTexture());
+    viewport.setUseTexture(0, true);
+    EXPECT_TRUE(viewport.useTexture(0));
     const QColor blue = colorAt(grabImage(viewport), p);
     EXPECT_NE(blue, initial) << "setUseTexture";
 
-    viewport.setTexture(solidTexture(QColor(0, 255, 0)));
+    viewport.setTexture(0, solidTexture(QColor(0, 255, 0)));
     EXPECT_NE(colorAt(grabImage(viewport), p), blue) << "setTexture";
 }
 
@@ -1861,8 +1918,8 @@ TEST(ViewportTextureTest, SolidTextureReplacesSurfaceColor) {
     Viewport viewport;
     showOnlyDiffuseFill(viewport);
     viewport.setSurfaces({textureSquare(viewport)});
-    viewport.setTexture(solidTexture(QColor(255, 0, 0)));
-    viewport.setUseTexture(true);
+    viewport.setTexture(0, solidTexture(QColor(255, 0, 0)));
+    viewport.setUseTexture(0, true);
     const QColor c = colorAt(showViewport(viewport, kMeshImageSize), sceneToScreen({0.0f, 0.0f, 0.0f}));
     EXPECT_GT(c.red(), 100);
     EXPECT_EQ(c.green(), 0);
@@ -1874,8 +1931,8 @@ TEST(ViewportTextureTest, TextureIsLitLikeSurfaceColor) {
     Viewport viewport;
     showOnlyFill(viewport);
     viewport.setSurfaces({textureSquare(viewport)});
-    viewport.setTexture(solidTexture(QColor(255, 255, 255)));
-    viewport.setUseTexture(true);
+    viewport.setTexture(0, solidTexture(QColor(255, 255, 255)));
+    viewport.setUseTexture(0, true);
     viewport.setKd(0.0f);
     viewport.setKs(0.0f);
     const QImage img = showViewport(viewport, kMeshImageSize);
@@ -1894,18 +1951,18 @@ TEST(ViewportTextureTest, UMapsAlongFirstParameterAndVAlongSecond) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = textureSquare(viewport);
     viewport.setSurfaces({surface});
-    viewport.setUseTexture(true);
+    viewport.setUseTexture(0, true);
     const auto at = [&](const QImage &img, const float u, const float v) {
         return surfaceAt(img, screenPoint(viewport, surface.evaluate(u, v).P)); // 0 = red, 2 = blue
     };
 
-    viewport.setTexture(splitU);
+    viewport.setTexture(0, splitU);
     QImage img = showViewport(viewport, kMeshImageSize);
     EXPECT_EQ(at(img, 0.25f, 0.5f), 0);
     EXPECT_EQ(at(img, 0.75f, 0.5f), 2);
     EXPECT_EQ(at(img, 0.5f, 0.25f), at(img, 0.5f, 0.75f));
 
-    viewport.setTexture(splitV);
+    viewport.setTexture(0, splitV);
     img = grabImage(viewport);
     EXPECT_EQ(at(img, 0.5f, 0.25f), 0);
     EXPECT_EQ(at(img, 0.5f, 0.75f), 2);
@@ -1921,8 +1978,8 @@ TEST(ViewportTextureTest, TextureCoordinatesAreInterpolatedInsideTriangles) {
         showOnlyDiffuseFill(viewport);
         const BezierSurface surface = textureSquare(viewport);
         viewport.setSurfaces({surface});
-        viewport.setTexture(stripes(alongU));
-        viewport.setUseTexture(true);
+        viewport.setTexture(0, stripes(alongU));
+        viewport.setUseTexture(0, true);
         const QImage img = showViewport(viewport, kMeshImageSize);
 
         for (const int k : {1, 3, 7, 11, 15}) {
@@ -1942,8 +1999,8 @@ TEST(ViewportTextureTest, TextureFollowsSurfaceWhenRotated) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = textureSquare(viewport);
     viewport.setSurfaces({surface});
-    viewport.setTexture(stripes(true));
-    viewport.setUseTexture(true);
+    viewport.setTexture(0, stripes(true));
+    viewport.setUseTexture(0, true);
     showViewport(viewport, kMeshImageSize);
     drag(viewport, QPoint(300, 300), QPoint(330, 310));
     const QImage img = grabImage(viewport);
@@ -1955,26 +2012,71 @@ TEST(ViewportTextureTest, TextureFollowsSurfaceWhenRotated) {
     }
 }
 
-TEST(ViewportTextureTest, TextureIsUsedOnEverySurface) {
-    // surface colors differ (red, green, blue); with a green texture all three squares are green
+TEST(ViewportTextureTest, EveryGroupStartsWithItsOwnWhiteTextureOff) {
+    const Viewport viewport;
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        EXPECT_FALSE(viewport.useTexture(i)) << i;
+        EXPECT_EQ(viewport.texture(i).width(), 1) << i;
+    }
+}
+
+TEST(ViewportTextureTest, TextureIsUsedOnlyOnItsOwnSurface) {
+    // surface colors are red, green, blue (surfaceAt 0, 1, 2); a texture of the "next" color on surface i
+    // changes only square i, the others keep their colors
+    const std::array<QColor, 3> next = {QColor(0, 255, 0), QColor(0, 0, 255), QColor(255, 0, 0)};
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        Viewport viewport;
+        showOnlyDiffuseFill(viewport);
+        viewport.setSurfaces(squaresInRow(viewport));
+        viewport.setTexture(i, solidTexture(next[i]));
+        viewport.setUseTexture(i, true);
+        EXPECT_TRUE(viewport.useTexture(i));
+        const QImage img = showViewport(viewport, kMeshImageSize);
+        for (int k = 0; k < 3; ++k) {
+            EXPECT_EQ(viewport.useTexture(k), k == i) << "surface " << k;
+            EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[k])), k == i ? (k + 1) % 3 : k) << "surface " << k;
+        }
+    }
+}
+
+TEST(ViewportTextureTest, EverySurfaceShowsItsOwnTexture) {
+    // three textures at once, each surface its own: surface k is drawn in the color of texture k
     Viewport viewport;
     showOnlyDiffuseFill(viewport);
     viewport.setSurfaces(squaresInRow(viewport));
-    viewport.setTexture(solidTexture(QColor(0, 255, 0)));
-    viewport.setUseTexture(true);
+    const std::array<QColor, 3> colors = {QColor(0, 0, 255), QColor(255, 0, 0), QColor(0, 255, 0)}; // 2, 0, 1
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        viewport.setTexture(i, solidTexture(colors[i]));
+        viewport.setUseTexture(i, true);
+    }
     const QImage img = showViewport(viewport, kMeshImageSize);
+    const std::array<int, 3> expected = {2, 0, 1};
     for (int k = 0; k < 3; ++k)
-        EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[k])), 1) << "surface " << k;
+        EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[k])), expected[k]) << "surface " << k;
+}
+
+TEST(ViewportTextureTest, TextureOfGroupIsUsedOnEverySurfaceOfIt) {
+    // surface k is in group k % kColorCount: the texture of group 0 also covers surface 3
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces(squaresInRow(viewport, true));
+    viewport.setTexture(0, solidTexture(QColor(0, 0, 255)));
+    viewport.setUseTexture(0, true);
+    const QImage img = showViewport(viewport, kMeshImageSize);
+    EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[0])), 2);
+    EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[3])), 2);
+    EXPECT_EQ(surfaceAt(img, sceneToScreen(kSquareCenters[1])), 1);
 }
 
 TEST(ViewportTextureTest, SwitchingTextureOffRestoresImage) {
     Viewport viewport;
     viewport.setSurfaces(assetSurfaces());
     const QImage before = showViewport(viewport, kMeshImageSize);
-    viewport.setTexture(stripes(true));
-    viewport.setUseTexture(true);
+    viewport.setTexture(0, stripes(true));
+    viewport.setUseTexture(0, true);
     ASSERT_NE(grabImage(viewport), before);
-    viewport.setUseTexture(false);
+    viewport.setUseTexture(0, false);
     EXPECT_EQ(grabImage(viewport), before);
 }
 
@@ -2010,7 +2112,7 @@ float expectedDiffuseRed(const Viewport &viewport, const BezierSurface &surface,
     const Mat3 &R = viewport.rotation();
     Vec3 N = normalized(R * sp.N);
     if (withMap)
-        N = perturbNormal(R * sp.Pu, R * sp.Pv, N, normalFromMap(viewport.normalMap().sample(u, v)));
+        N = perturbNormal(R * sp.Pu, R * sp.Pv, N, normalFromMap(viewport.normalMap(0).sample(u, v)));
     if (N.z < 0) N = -N; // lit from both sides
     const Vec3 L = normalized(viewport.lightPosition() - R * sp.P);
     const float io = ioRed >= 0.0f ? ioRed : static_cast<float>(viewport.surfaceColor(0).red()) / 255.0f;
@@ -2035,10 +2137,10 @@ constexpr std::array<std::pair<float, float>, 5> kMapSamples = {{{0.2f, 0.3f}, {
 
 TEST(ViewportNormalMapTest, OffByDefaultWithFlatMap) {
     const Viewport viewport;
-    EXPECT_FALSE(viewport.useNormalMap());
-    EXPECT_EQ(viewport.normalMap().width(), 1);
-    EXPECT_EQ(viewport.normalMap().height(), 1);
-    EXPECT_VEC3_NEAR(colorToNormal(viewport.normalMap().texel(0, 0)), (Vec3{0.0f, 0.0f, 1.0f}), 0.01f);
+    EXPECT_FALSE(viewport.useNormalMap(0));
+    EXPECT_EQ(viewport.normalMap(0).width(), 1);
+    EXPECT_EQ(viewport.normalMap(0).height(), 1);
+    EXPECT_VEC3_NEAR(colorToNormal(viewport.normalMap(0).texel(0, 0)), (Vec3{0.0f, 0.0f, 1.0f}), 0.01f);
 }
 
 TEST(ViewportNormalMapTest, SettersStoreValuesAndRedraw) {
@@ -2049,16 +2151,16 @@ TEST(ViewportNormalMapTest, SettersStoreValuesAndRedraw) {
     const QPointF p = screenPoint(viewport, surface.evaluate(0.3f, 0.6f).P);
     const QColor initial = colorAt(showViewport(viewport, kMeshImageSize), p);
 
-    viewport.setNormalMap(uniformNormalMap({0.6f, 0.0f, 0.8f}));
-    EXPECT_GT(colorToNormal(viewport.normalMap().texel(0, 0)).x, 0.5f);
+    viewport.setNormalMap(0, uniformNormalMap({0.6f, 0.0f, 0.8f}));
+    EXPECT_GT(colorToNormal(viewport.normalMap(0).texel(0, 0)).x, 0.5f);
     EXPECT_EQ(colorAt(grabImage(viewport), p), initial) << "map set but not used yet";
 
-    viewport.setUseNormalMap(true);
-    EXPECT_TRUE(viewport.useNormalMap());
+    viewport.setUseNormalMap(0, true);
+    EXPECT_TRUE(viewport.useNormalMap(0));
     const QColor bent = colorAt(grabImage(viewport), p);
     EXPECT_NE(bent, initial) << "setUseNormalMap";
 
-    viewport.setNormalMap(uniformNormalMap({-0.6f, 0.0f, 0.8f}));
+    viewport.setNormalMap(0, uniformNormalMap({-0.6f, 0.0f, 0.8f}));
     EXPECT_NE(colorAt(grabImage(viewport), p), bent) << "setNormalMap";
 }
 
@@ -2070,7 +2172,7 @@ TEST(ViewportNormalMapTest, FlatMapKeepsImageAlmostUnchanged) {
     viewport.setSurfaces(assetSurfaces());
     showOnlyDiffuseFill(viewport);
     const QImage before = showViewport(viewport, kMeshImageSize);
-    viewport.setUseNormalMap(true);
+    viewport.setUseNormalMap(0, true);
     const QImage after = grabImage(viewport);
     const std::vector<QPoint> drawn = drawnPixels(before);
     ASSERT_GT(drawn.size(), 10000u);
@@ -2092,8 +2194,8 @@ TEST(ViewportNormalMapTest, BumpIsLitOnTheSideFacingTheLight) {
     viewport.setSurfaces({textureSquare(viewport)}); // flat on the screen, centred, half side 3
     TextureLoadResult bump = loadTexture(":/assets/normal_maps/normal_circle.png");
     ASSERT_TRUE(bump.texture.has_value()) << bump.error.toStdString();
-    viewport.setNormalMap(std::move(*bump.texture));
-    viewport.setUseNormalMap(true);
+    viewport.setNormalMap(0, std::move(*bump.texture));
+    viewport.setUseNormalMap(0, true);
     showViewport(viewport, kMeshImageSize);
 
     // four sides of the bump on the screen: right, top, left, bottom (scene y points up the screen)
@@ -2129,8 +2231,8 @@ TEST(ViewportNormalMapTest, BentNormalGivesLambertBrightness) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = textureSquare(viewport);
     viewport.setSurfaces({surface});
-    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
-    viewport.setUseNormalMap(true);
+    viewport.setNormalMap(0, uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(0, true);
     const QImage img = showViewport(viewport, kMeshImageSize);
 
     float largestChange = 0.0f;
@@ -2148,8 +2250,8 @@ TEST(ViewportNormalMapTest, ReliefChangesWithLightPosition) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = textureSquare(viewport);
     viewport.setSurfaces({surface});
-    viewport.setNormalMap(ridgeNormalMap());
-    viewport.setUseNormalMap(true);
+    viewport.setNormalMap(0, ridgeNormalMap());
+    viewport.setUseNormalMap(0, true);
     showViewport(viewport, kMeshImageSize);
 
     // start where the light is far along x, so the two halves differ clearly
@@ -2183,8 +2285,8 @@ TEST(ViewportNormalMapTest, ReliefStaysOnSurfaceWhenRotated) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = textureSquare(viewport);
     viewport.setSurfaces({surface});
-    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
-    viewport.setUseNormalMap(true);
+    viewport.setNormalMap(0, uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(0, true);
     showViewport(viewport, kMeshImageSize);
     drag(viewport, QPoint(300, 300), QPoint(320, 285));
     const QImage img = grabImage(viewport);
@@ -2199,8 +2301,8 @@ TEST(ViewportNormalMapTest, UnderSideIsLitWithBentNormal) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = flipped(textureSquare(viewport));
     viewport.setSurfaces({surface});
-    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
-    viewport.setUseNormalMap(true);
+    viewport.setNormalMap(0, uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(0, true);
     const QImage img = showViewport(viewport, kMeshImageSize);
     ASSERT_LT((viewport.rotation() * surface.evaluate(0.5f, 0.5f).N).z, 0.0f) << "test needs the under side";
     for (const auto &[u, v] : kMapSamples) {
@@ -2216,10 +2318,10 @@ TEST(ViewportNormalMapTest, WorksTogetherWithTexture) {
     showOnlyDiffuseFill(viewport);
     const BezierSurface surface = textureSquare(viewport);
     viewport.setSurfaces({surface});
-    viewport.setTexture(solidTexture(QColor(255, 0, 0)));
-    viewport.setUseTexture(true);
-    viewport.setNormalMap(uniformNormalMap({0.5f, -0.4f, 0.75f}));
-    viewport.setUseNormalMap(true);
+    viewport.setTexture(0, solidTexture(QColor(255, 0, 0)));
+    viewport.setUseTexture(0, true);
+    viewport.setNormalMap(0, uniformNormalMap({0.5f, -0.4f, 0.75f}));
+    viewport.setUseNormalMap(0, true);
     const QImage img = showViewport(viewport, kMeshImageSize);
     for (const auto &[u, v] : kMapSamples) {
         const QColor c = colorAt(img, screenPoint(viewport, surface.evaluate(u, v).P));
@@ -2230,14 +2332,40 @@ TEST(ViewportNormalMapTest, WorksTogetherWithTexture) {
     }
 }
 
+TEST(ViewportNormalMapTest, EveryGroupStartsWithItsOwnFlatMapOff) {
+    const Viewport viewport;
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        EXPECT_FALSE(viewport.useNormalMap(i)) << i;
+        EXPECT_VEC3_NEAR(colorToNormal(viewport.normalMap(i).texel(0, 0)), (Vec3{0.0f, 0.0f, 1.0f}), 0.01f);
+    }
+}
+
+TEST(ViewportNormalMapTest, NormalMapBendsOnlyItsOwnSurface) {
+    // a tilted map on surface i changes the shading of square i only
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        SCOPED_TRACE(i);
+        Viewport viewport;
+        showOnlyDiffuseFill(viewport);
+        viewport.setSurfaces(squaresInRow(viewport));
+        const QImage before = showViewport(viewport, kMeshImageSize);
+        viewport.setNormalMap(i, uniformNormalMap({0.6f, -0.5f, 0.6f}));
+        viewport.setUseNormalMap(i, true);
+        const QImage after = grabImage(viewport);
+        for (int k = 0; k < 3; ++k) {
+            EXPECT_EQ(viewport.useNormalMap(k), k == i) << "surface " << k;
+            EXPECT_EQ(sameAround(after, before, sceneToScreen(kSquareCenters[k])), k != i) << "surface " << k;
+        }
+    }
+}
+
 TEST(ViewportNormalMapTest, SwitchingNormalMapOffRestoresImage) {
     Viewport viewport;
     viewport.setSurfaces(assetSurfaces());
     const QImage before = showViewport(viewport, kMeshImageSize);
-    viewport.setNormalMap(ridgeNormalMap());
-    viewport.setUseNormalMap(true);
+    viewport.setNormalMap(0, ridgeNormalMap());
+    viewport.setUseNormalMap(0, true);
     ASSERT_NE(grabImage(viewport), before);
-    viewport.setUseNormalMap(false);
+    viewport.setUseNormalMap(0, false);
     EXPECT_EQ(grabImage(viewport), before);
 }
 
@@ -2368,6 +2496,20 @@ TEST(ViewportDeathTest, RejectsSurfaceGroupIndexOutOfRange) {
     EXPECT_DEATH(viewport.setSurfaceVisible(-1, false), "surface group index out of range");
     EXPECT_DEATH(viewport.setSurfaceVisible(Viewport::kColorCount, false), "surface group index out of range");
     EXPECT_DEATH(std::ignore = viewport.surfaceVisible(Viewport::kColorCount), "surface group index out of range");
+}
+
+TEST(ViewportDeathTest, RejectsTextureAndNormalMapGroupIndexOutOfRange) {
+    Viewport viewport;
+    for (const int i : {-1, Viewport::kColorCount}) {
+        EXPECT_DEATH(viewport.setUseTexture(i, true), "surface group index out of range");
+        EXPECT_DEATH(viewport.setTexture(i, Texture()), "surface group index out of range");
+        EXPECT_DEATH(std::ignore = viewport.useTexture(i), "surface group index out of range");
+        EXPECT_DEATH(std::ignore = viewport.texture(i), "surface group index out of range");
+        EXPECT_DEATH(viewport.setUseNormalMap(i, true), "surface group index out of range");
+        EXPECT_DEATH(viewport.setNormalMap(i, Texture()), "surface group index out of range");
+        EXPECT_DEATH(std::ignore = viewport.useNormalMap(i), "surface group index out of range");
+        EXPECT_DEATH(std::ignore = viewport.normalMap(i), "surface group index out of range");
+    }
 }
 
 TEST(ViewportDeathTest, RejectsLightZOutOfRange) {

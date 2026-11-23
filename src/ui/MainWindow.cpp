@@ -27,8 +27,11 @@
 #include <QFileInfo>
 #include <QRadioButton>
 #include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QTabWidget>
 #include <QVariant>
 
+#include <cassert>
 #include <cmath>
 #include <utility>
 
@@ -84,82 +87,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_viewport->setShowLightPath(true); // hidden in a bare Viewport, shown in the program from the start
     addToggle("Light path", m_viewport->showLightPath(), &Viewport::setShowLightPath);
 
-    // one column per surface group (surfaces take them in turn: surface k is in group k % kColorCount):
-    // a check box that shows / hides the group and, below it, a button that is just a swatch of its color
-    auto *surfacesGroup = new QGroupBox("Surfaces", panel);
-    auto *surfacesLayout = new QGridLayout(surfacesGroup);
-    for (int i = 0; i < Viewport::kColorCount; ++i) {
-        auto *visible = new QCheckBox(QString("Surface %1").arg(i + 1), surfacesGroup);
-        visible->setObjectName(QString("surfaceVisibleCheck%1").arg(i + 1));
-        visible->setToolTip(QString("Show surface %1 (and every %2th surface after it)").arg(i + 1).arg(Viewport::kColorCount));
-        visible->setChecked(m_viewport->surfaceVisible(i));
-        surfacesLayout->addWidget(visible, 0, i);
-        connect(visible, &QCheckBox::toggled, m_viewport, [this, i](const bool on) { m_viewport->setSurfaceVisible(i, on); });
-
-        auto *button = new QPushButton(surfacesGroup);
-        button->setObjectName(QString("surfaceColorButton%1").arg(i + 1));
-        button->setToolTip(QString("Surface color %1...").arg(i + 1));
-        button->setAccessibleName(QString("Surface color %1").arg(i + 1));
-        button->setIconSize(kSwatchSize);
-        surfacesLayout->addWidget(button, 1, i);
-        connect(button, &QPushButton::clicked, this, [this, i] { chooseSurfaceColor(i); });
-        m_surfaceColorButtons[i] = button;
-        updateSurfaceColorButton(i);
-    }
-
-    // object color IO (surface colors or a texture) and the normal map, independent of each other
-    auto *surfaceGroup = new QGroupBox("Surface texture", panel);
-    auto *surfaceLayout = new QVBoxLayout(surfaceGroup);
-    auto *solidColorRadio = new QRadioButton("Solid color", surfaceGroup);
-    solidColorRadio->setObjectName("solidColorRadio");
-    m_textureRadio = new QRadioButton("Texture", surfaceGroup);
-    m_textureRadio->setObjectName("textureRadio"); // same parent: the two radio buttons exclude each other
-    (m_viewport->useTexture() ? m_textureRadio : solidColorRadio)->setChecked(true);
-    connect(m_textureRadio, &QRadioButton::toggled, m_viewport, &Viewport::setUseTexture);
-
-    m_normalMapCheck = new QCheckBox("Normal map", surfaceGroup);
-    m_normalMapCheck->setObjectName("normalMapCheck");
-    m_normalMapCheck->setChecked(m_viewport->useNormalMap());
-    connect(m_normalMapCheck, &QCheckBox::toggled, m_viewport, &Viewport::setUseNormalMap);
-
-    // built-in images in a list (item data = resource path), files loaded by the user are added to it
-    const auto addImageCombo = [&](const QString &name, const auto &images) {
-        auto *combo = new QComboBox(surfaceGroup);
-        combo->setObjectName(name);
-        for (const BuiltInImage &image : images)
-            combo->addItem(QString::fromUtf8(image.name), QString::fromUtf8(image.path));
-        return combo;
-    };
-    m_textureCombo = addImageCombo("textureCombo", kBuiltInTextures);
-    m_normalMapCombo = addImageCombo("normalMapCombo", kBuiltInNormalMaps);
-    auto *loadTextureButton = new QPushButton("Load...", surfaceGroup);
-    loadTextureButton->setObjectName("loadTextureButton");
-    loadTextureButton->setToolTip("Load texture from a file");
-    auto *loadNormalMapButton = new QPushButton("Load...", surfaceGroup);
-    loadNormalMapButton->setObjectName("loadNormalMapButton");
-    loadNormalMapButton->setToolTip("Load normal map from a file");
-
-    // rows: [solid color | texture], [texture list | Load...], [normal map], [normal map list | Load...]
-    const auto addRow = [surfaceLayout](QWidget *left, QWidget *right, const int leftStretch) {
-        auto *row = new QHBoxLayout();
-        row->addWidget(left, leftStretch);
-        row->addWidget(right, 1);
-        surfaceLayout->addLayout(row);
-    };
-    addRow(solidColorRadio, m_textureRadio, 1);
-    addRow(m_textureCombo, loadTextureButton, 2);
-    surfaceLayout->addWidget(m_normalMapCheck);
-    addRow(m_normalMapCombo, loadNormalMapButton, 2);
-
-    // connected after filling the lists: adding the first item already emits currentIndexChanged
-    connect(m_textureCombo, &QComboBox::currentIndexChanged, this, [this](const int i) {
-        loadTextureFrom(m_textureCombo->itemData(i).toString());
-    });
-    connect(m_normalMapCombo, &QComboBox::currentIndexChanged, this, [this](const int i) {
-        loadNormalMapFrom(m_normalMapCombo->itemData(i).toString());
-    });
-    connect(loadTextureButton, &QPushButton::clicked, this, &MainWindow::chooseTextureFile);
-    connect(loadNormalMapButton, &QPushButton::clicked, this, &MainWindow::chooseNormalMapFile);
+    // one tab per surface group (surface k is in group k % kColorCount) with everything about its look
+    m_surfaceTabs = new QTabWidget(panel);
+    m_surfaceTabs->setObjectName("surfaceTabs");
+    m_surfaceTabs->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum); // as tall as a tab, no empty space
+    for (int i = 0; i < Viewport::kColorCount; ++i)
+        m_surfaceTabs->addTab(createSurfaceTab(i), QString("Surface %1").arg(i + 1));
 
     // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, light z as tenths, m in [1, 100] as is
     auto *lightGroup = new QGroupBox("Lighting", panel);
@@ -215,8 +148,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     panelLayout->addWidget(meshGroup);
     panelLayout->addWidget(displayGroup);
-    panelLayout->addWidget(surfacesGroup);
-    panelLayout->addWidget(surfaceGroup);
+    panelLayout->addWidget(m_surfaceTabs);
     panelLayout->addWidget(lightGroup);
     panelLayout->addStretch();
     layout->addWidget(panel);
@@ -254,27 +186,42 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         on ? showFullScreen() : showNormal();
     });
 
+    // texture, normal map and loading act on the surface of the open tab; the checks show that surface's state
     auto *surfaceMenu = menuBar()->addMenu("Surface");
     auto *textureAction = addAction(surfaceMenu, "Texture", "textureAction", QKeySequence(Qt::Key_T));
     textureAction->setCheckable(true);
-    textureAction->setChecked(m_textureRadio->isChecked());
-    connect(textureAction, &QAction::toggled, this, [this, solidColorRadio](const bool on) {
-        (on ? m_textureRadio : solidColorRadio)->setChecked(true);
-    });
-    connect(m_textureRadio, &QRadioButton::toggled, textureAction, &QAction::setChecked);
     auto *normalMapAction = addAction(surfaceMenu, "Normal map", "normalMapAction", QKeySequence(Qt::Key_N));
     normalMapAction->setCheckable(true);
-    normalMapAction->setChecked(m_normalMapCheck->isChecked());
-    connect(normalMapAction, &QAction::toggled, m_normalMapCheck, &QCheckBox::setChecked);
-    connect(m_normalMapCheck, &QCheckBox::toggled, normalMapAction, &QAction::setChecked);
+    // the actions only follow the open tab: a change on a hidden tab doesn't touch them
+    const auto showTabState = [this, textureAction, normalMapAction](const int i) {
+        textureAction->setChecked(m_surfaceControls[i].texture->isChecked());
+        normalMapAction->setChecked(m_surfaceControls[i].normalMap->isChecked());
+    };
+    showTabState(currentSurface());
+    connect(m_surfaceTabs, &QTabWidget::currentChanged, this, showTabState);
+    connect(textureAction, &QAction::toggled, this, [this](const bool on) {
+        const SurfaceControls &c = m_surfaceControls[currentSurface()];
+        (on ? c.texture : c.solidColor)->setChecked(true);
+    });
+    connect(normalMapAction, &QAction::toggled, this, [this](const bool on) {
+        m_surfaceControls[currentSurface()].normalMap->setChecked(on);
+    });
+    for (int i = 0; i < Viewport::kColorCount; ++i) {
+        connect(m_surfaceControls[i].texture, &QRadioButton::toggled, textureAction, [this, i, textureAction](const bool on) {
+            if (i == currentSurface()) textureAction->setChecked(on);
+        });
+        connect(m_surfaceControls[i].normalMap, &QCheckBox::toggled, normalMapAction, [this, i, normalMapAction](const bool on) {
+            if (i == currentSurface()) normalMapAction->setChecked(on);
+        });
+    }
     surfaceMenu->addSeparator();
     auto *loadTextureAction = addAction(surfaceMenu, "Load texture...", "loadTextureAction",
                                         QKeySequence(Qt::CTRL | Qt::Key_T));
-    connect(loadTextureAction, &QAction::triggered, this, &MainWindow::chooseTextureFile);
+    connect(loadTextureAction, &QAction::triggered, this, [this] { chooseTextureFile(currentSurface()); });
     // not Ctrl+M: Cmd+M minimizes the window on macOS
     auto *loadNormalMapAction = addAction(surfaceMenu, "Load normal map...", "loadNormalMapAction",
                                           QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    connect(loadNormalMapAction, &QAction::triggered, this, &MainWindow::chooseNormalMapFile);
+    connect(loadNormalMapAction, &QAction::triggered, this, [this] { chooseNormalMapFile(currentSurface()); });
     surfaceMenu->addSeparator();
     // the solid color is "chosen from the menu" (task); the buttons in the panel open the same dialog
     for (int i = 0; i < Viewport::kColorCount; ++i) {
@@ -314,6 +261,86 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     loadDefaultSurfaces();
     loadDefaultImages();
+}
+
+/// Tab of surface group i, two columns: what is chosen on the left, its details on the right
+/// - [x] Visible
+/// - (o) Solid color | [color swatch]
+/// - ( ) Texture     | [list] [Load...]
+/// - [x] Normal map  | [list] [Load...]
+QWidget *MainWindow::createSurfaceTab(const int i) {
+    auto *tab = new QWidget();
+    auto *grid = new QGridLayout(tab);
+    grid->setVerticalSpacing(kRowSpacing);
+    grid->setColumnStretch(1, 1);
+    const QString n = QString::number(i + 1);
+    SurfaceControls &c = m_surfaceControls[i];
+
+    c.visible = new QCheckBox("Visible", tab);
+    c.visible->setObjectName("surfaceVisibleCheck" + n);
+    c.visible->setToolTip(QString("Show surface %1 (and every %2th surface after it)").arg(n).arg(Viewport::kColorCount));
+    c.visible->setChecked(m_viewport->surfaceVisible(i));
+    connect(c.visible, &QCheckBox::toggled, m_viewport, [this, i](const bool on) { m_viewport->setSurfaceVisible(i, on); });
+    grid->addWidget(c.visible, 0, 0, 1, 2);
+
+    // object color IO: the two radio buttons have the same parent (the tab), so they exclude each other
+    c.solidColor = new QRadioButton("Solid color", tab);
+    c.solidColor->setObjectName("solidColorRadio" + n);
+    c.color = new QPushButton(tab);
+    c.color->setObjectName("surfaceColorButton" + n);
+    c.color->setToolTip(QString("Surface color %1...").arg(n));
+    c.color->setAccessibleName(QString("Surface color %1").arg(n));
+    c.color->setIconSize(kSwatchSize);
+    connect(c.color, &QPushButton::clicked, this, [this, i] { chooseSurfaceColor(i); });
+    grid->addWidget(c.solidColor, 1, 0);
+    grid->addWidget(c.color, 1, 1);
+    updateSurfaceColorButton(i);
+
+    c.texture = new QRadioButton("Texture", tab);
+    c.texture->setObjectName("textureRadio" + n);
+    (m_viewport->useTexture(i) ? c.texture : c.solidColor)->setChecked(true);
+    connect(c.texture, &QRadioButton::toggled, m_viewport, [this, i](const bool on) { m_viewport->setUseTexture(i, on); });
+
+    c.normalMap = new QCheckBox("Normal map", tab);
+    c.normalMap->setObjectName("normalMapCheck" + n);
+    c.normalMap->setChecked(m_viewport->useNormalMap(i));
+    connect(c.normalMap, &QCheckBox::toggled, m_viewport, [this, i](const bool on) { m_viewport->setUseNormalMap(i, on); });
+
+    // built-in images in a list (item data = resource path), files loaded by the user are added to it
+    // object names: e.g. "textureCombo2" and "loadTextureButton2" for name "Texture" on tab 2
+    const auto addImageRow = [&](const int row, QWidget *enable, const QString &what, const QString &name,
+                                 const auto &images) {
+        auto *combo = new QComboBox(tab);
+        combo->setObjectName(name.left(1).toLower() + name.mid(1) + "Combo" + n);
+        for (const BuiltInImage &image : images)
+            combo->addItem(QString::fromUtf8(image.name), QString::fromUtf8(image.path));
+        auto *load = new QPushButton("Load...", tab);
+        load->setObjectName("load" + name + "Button" + n);
+        load->setToolTip(QString("Load %1 from a file").arg(what));
+
+        auto *details = new QHBoxLayout();
+        details->addWidget(combo, 2);
+        details->addWidget(load, 1);
+        grid->addWidget(enable, row, 0);
+        grid->addLayout(details, row, 1);
+        return std::pair{combo, load};
+    };
+    const auto [textureCombo, loadTexture] = addImageRow(2, c.texture, "texture", "Texture", kBuiltInTextures);
+    const auto [normalMapCombo, loadNormalMap] = addImageRow(3, c.normalMap, "normal map", "NormalMap", kBuiltInNormalMaps);
+    c.textureCombo = textureCombo;
+    c.normalMapCombo = normalMapCombo;
+
+    // connected after filling the lists: adding the first item already emits currentIndexChanged
+    connect(c.textureCombo, &QComboBox::currentIndexChanged, this, [this, i](const int item) {
+        loadTextureFrom(i, m_surfaceControls[i].textureCombo->itemData(item).toString());
+    });
+    connect(c.normalMapCombo, &QComboBox::currentIndexChanged, this, [this, i](const int item) {
+        loadNormalMapFrom(i, m_surfaceControls[i].normalMapCombo->itemData(item).toString());
+    });
+    connect(loadTexture, &QPushButton::clicked, this, [this, i] { chooseTextureFile(i); });
+    connect(loadNormalMap, &QPushButton::clicked, this, [this, i] { chooseNormalMapFile(i); });
+
+    return tab;
 }
 
 /// Loads the surfaces embedded in the executable. On error shows a message and continues with no surfaces.
@@ -363,15 +390,18 @@ void MainWindow::chooseSurfaceColor(const int i) {
 void MainWindow::updateSurfaceColorButton(const int i) {
     QPixmap swatch(kSwatchSize);
     swatch.fill(m_viewport->surfaceColor(i));
-    m_surfaceColorButtons[i]->setIcon(QIcon(swatch));
+    m_surfaceControls[i].color->setIcon(QIcon(swatch));
 }
 
-/// The first built-in images are set in the viewport, but not switched on: the program starts with solid colors
+/// The first built-in images are set for every surface, but not switched on: the program starts with solid colors.
+/// Each file is read once and copied
 void MainWindow::loadDefaultImages() {
-    if (auto texture = loadImage(QString::fromUtf8(kBuiltInTextures.front().path), "texture"))
-        m_viewport->setTexture(std::move(*texture));
-    if (auto normalMap = loadImage(QString::fromUtf8(kBuiltInNormalMaps.front().path), "normal map"))
-        m_viewport->setNormalMap(std::move(*normalMap));
+    if (const auto texture = loadImage(QString::fromUtf8(kBuiltInTextures.front().path), "texture"))
+        for (int i = 0; i < Viewport::kColorCount; ++i)
+            m_viewport->setTexture(i, *texture);
+    if (const auto normalMap = loadImage(QString::fromUtf8(kBuiltInNormalMaps.front().path), "normal map"))
+        for (int i = 0; i < Viewport::kColorCount; ++i)
+            m_viewport->setNormalMap(i, *normalMap);
 }
 
 std::optional<Texture> MainWindow::loadImage(const QString &path, const QString &what) {
@@ -395,25 +425,29 @@ void MainWindow::selectComboItem(QComboBox *combo, const QString &path) {
     combo->setCurrentIndex(i);
 }
 
-bool MainWindow::loadTextureFrom(const QString &path) {
+bool MainWindow::loadTextureFrom(const int i, const QString &path) {
+    assert(i >= 0 && i < Viewport::kColorCount && "surface group index out of range!");
     auto texture = loadImage(path, "texture");
     if (!texture) return false;
 
-    m_viewport->setTexture(std::move(*texture));
-    selectComboItem(m_textureCombo, path);
-    m_textureRadio->setChecked(true); // a chosen texture is meant to be seen; toggled() switches the viewport
-    statusBar()->showMessage(QString("Texture: %1").arg(m_textureCombo->currentText()));
+    const SurfaceControls &c = m_surfaceControls[i];
+    m_viewport->setTexture(i, std::move(*texture));
+    selectComboItem(c.textureCombo, path);
+    c.texture->setChecked(true); // a chosen texture is meant to be seen; toggled() switches the viewport
+    statusBar()->showMessage(QString("Surface %1 texture: %2").arg(i + 1).arg(c.textureCombo->currentText()));
     return true;
 }
 
-bool MainWindow::loadNormalMapFrom(const QString &path) {
+bool MainWindow::loadNormalMapFrom(const int i, const QString &path) {
+    assert(i >= 0 && i < Viewport::kColorCount && "surface group index out of range!");
     auto normalMap = loadImage(path, "normal map");
     if (!normalMap) return false;
 
-    m_viewport->setNormalMap(std::move(*normalMap));
-    selectComboItem(m_normalMapCombo, path);
-    m_normalMapCheck->setChecked(true);
-    statusBar()->showMessage(QString("Normal map: %1").arg(m_normalMapCombo->currentText()));
+    const SurfaceControls &c = m_surfaceControls[i];
+    m_viewport->setNormalMap(i, std::move(*normalMap));
+    selectComboItem(c.normalMapCombo, path);
+    c.normalMap->setChecked(true);
+    statusBar()->showMessage(QString("Surface %1 normal map: %2").arg(i + 1).arg(c.normalMapCombo->currentText()));
     return true;
 }
 
@@ -421,16 +455,18 @@ namespace {
 const QString kImageFilter = QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp);;All files (*)");
 } // namespace
 
-void MainWindow::chooseTextureFile() {
-    const QString path = QFileDialog::getOpenFileName(this, "Load texture", QString(), kImageFilter);
+void MainWindow::chooseTextureFile(const int i) {
+    const QString path = QFileDialog::getOpenFileName(this, QString("Load texture of surface %1").arg(i + 1),
+                                                      QString(), kImageFilter);
     if (path.isEmpty()) return; // dialog cancelled
-    loadTextureFrom(path);
+    loadTextureFrom(i, path);
 }
 
-void MainWindow::chooseNormalMapFile() {
-    const QString path = QFileDialog::getOpenFileName(this, "Load normal map", QString(), kImageFilter);
+void MainWindow::chooseNormalMapFile(const int i) {
+    const QString path = QFileDialog::getOpenFileName(this, QString("Load normal map of surface %1").arg(i + 1),
+                                                      QString(), kImageFilter);
     if (path.isEmpty()) return;
-    loadNormalMapFrom(path);
+    loadNormalMapFrom(i, path);
 }
 
 void MainWindow::changeEvent(QEvent *event) {

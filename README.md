@@ -14,8 +14,8 @@ Z-buffer, lighting) and drawn into an image – no OpenGL.
 - Lambert + specular lighting with adjustable `kd`, `ks`, `m` and light color.
 - A point light moving along a closed, editable Bézier curve (drag its control points), animation can be stopped,
   height of the curve set with a slider.
-- Object color from a solid color or a texture; normal mapping (`N = [Pu, Pv, N] · N_map`). Built-in textures and
-  normal maps, others loaded from files.
+- Object color from a solid color or a texture and normal mapping (`N = [Pu, Pv, N] · N_map`), chosen separately
+  for every surface in its own tab of the side panel. Built-in textures and normal maps, others loaded from files.
 - Showing / hiding the Bézier polygons, the mesh, the vertices, the fill, the light path and single surfaces.
 - Keyboard shortcuts for every menu action and built-in documentation in Polish and English (`F1`).
 
@@ -31,16 +31,16 @@ to each successful run (**Actions → Build → the latest run → Artifacts**):
 ## Usage
 
 Drag with the left mouse button to rotate the scene. The side panel controls the triangulation, what is drawn,
-the surfaces, the texture and the lighting. Press `F1` (menu *Help → Documentation*) for the full documentation:
-the user manual, all keyboard shortcuts and a detailed technical description of how the mouse movement becomes
-a rotation.
+every surface (one tab each: visibility, solid color or texture, normal map) and the lighting. Press `F1`
+(menu *Help → Documentation*) for the full documentation: the user manual, all keyboard shortcuts and a detailed
+technical description of how the mouse movement becomes a rotation.
 
 Most useful shortcuts (`Ctrl` is `⌘` on macOS):
 
 | Key | Action |
 |---|---|
 | `Space` | stop / resume the moving light |
-| `T` / `N` | texture / normal map on and off |
+| `T` / `N` | texture / normal map on and off (surface in the open tab) |
 | `R` | reset the rotation |
 | `F11` | full screen |
 | `F1` | documentation |

@@ -2,13 +2,13 @@
 
 ## About
 
-The program displays cubic Bézier surfaces read from a text file. It divides every surface into a triangle mesh, rotates the whole scene with the mouse, fills the triangles with a depth buffer (Z-buffer) and lights them with the Lambert model plus a specular term. The light source moves along a closed, editable Bézier curve. The object color can come from a solid color or from a texture, and the normal vector can be modified by a normal map.
+The program displays cubic Bézier surfaces read from a text file. It divides every surface into a triangle mesh, rotates the whole scene with the mouse, fills the triangles with a depth buffer (Z-buffer) and lights them with the Lambert model plus a specular term. The light source moves along a closed, editable Bézier curve. The object color can come from a solid color or from a texture, and the normal vector can be modified by a normal map – separately for every surface.
 
 ## Quick start
 
 1. Drag with the mouse in the drawing area (left button) to rotate the scene.
 2. `Space` stops and resumes the moving light.
-3. `T` switches the texture on, `N` switches the normal map on.
+3. `T` switches the texture on, `N` switches the normal map on – on the surface of the open tab "Surface 1"–"Surface 3".
 4. `R` restores the initial rotation of the scene.
 5. `F1` opens this window; the "Polski" button at the bottom switches the language of the help.
 
@@ -32,17 +32,18 @@ The check boxes decide what is drawn:
 | "Triangle fill" | filled, lit triangles |
 | "Light path" | the light curve, its control polygon, its control points and the current light position |
 
-### Surfaces
+### Tabs "Surface 1" – "Surface 3"
 
-- "Surface 1", "Surface 2", "Surface 3" – show or hide surfaces. Surface number `k` (counting from 1) belongs to group `((k−1) mod 3) + 1`: "Surface 1" controls surfaces 1, 4, 7…, "Surface 2" – 2, 5, 8… A hidden surface doesn't cover what is behind it.
-- Color swatches under the check boxes – a click opens the choice of the solid color of that group of surfaces (the same choice is in the "Surface" menu).
+Every surface has its own tab and its own settings, independent of the other surfaces. Surface number `k` (counting from 1) belongs to tab `((k−1) mod 3) + 1`: tab "Surface 1" controls surfaces 1, 4, 7…, "Surface 2" – 2, 5, 8… In every tab:
 
-### Surface texture
-
+- "Visible" – shows or hides the surface. A hidden surface doesn't cover what is behind it.
 - "Solid color" / "Texture" – the object color `IO` in the lighting equation: a solid color or a texture.
-- Texture list and the "Load..." button – choose a built-in texture or load an image from a file. Choosing a texture switches it on at once; a loaded file is added to the list.
+- Color swatch next to "Solid color" – a click opens the choice of the solid color of the surface (the same choice is in the "Surface" menu).
+- Texture list and the "Load..." button next to "Texture" – choose a built-in texture or load an image from a file. Choosing a texture switches it on at once; a loaded file is added to the list of this surface.
 - "Normal map" – switches on the modification of the normal vector by a normal map, independently of the object color.
-- Normal map list and the "Load..." button – choose a built-in normal map or load one from a file.
+- Normal map list and the "Load..." button next to "Normal map" – choose a built-in normal map or load one from a file.
+
+At the start every surface has a solid color, the first built-in texture ("Floor") and normal map ("Floor") chosen, and the normal map switched off.
 
 ### Lighting
 
@@ -59,15 +60,17 @@ The check boxes decide what is drawn:
 | "File" | "Quit" | closes the program |
 | "Scene" | "Reset rotation" | restores the initial rotation of the scene |
 | "Scene" | "Full screen" | toggles full screen mode |
-| "Surface" | "Texture" | toggles the object color: texture / solid color |
-| "Surface" | "Normal map" | switches the normal map on and off |
-| "Surface" | "Load texture..." | loads a texture from a file |
-| "Surface" | "Load normal map..." | loads a normal map from a file |
+| "Surface" | "Texture" | toggles the object color of the surface in the open tab: texture / solid color |
+| "Surface" | "Normal map" | switches the normal map of the surface in the open tab on and off |
+| "Surface" | "Load texture..." | loads the texture of the surface in the open tab from a file |
+| "Surface" | "Load normal map..." | loads the normal map of the surface in the open tab from a file |
 | "Surface" | "Surface color 1..." – "Surface color 3..." | choice of the solid color of a group of surfaces |
 | "Lighting" | "Animate light" | stops and resumes the moving light |
 | "Lighting" | "Light color..." | choice of the light color |
 | "Lighting" | "Reset light path" | restores the default shape of the light curve (the height `z` stays) |
 | "Help" | "Documentation" | opens this window |
+
+The check marks of "Texture" and "Normal map" show the state of the surface in the open tab and change when another tab is opened.
 
 ## Mouse controls
 
@@ -82,13 +85,13 @@ On macOS `Ctrl` means the `⌘` (Command) key, and the function keys may need `f
 | Shortcut | Action |
 |---|---|
 | `Space` | stop / resume the moving light |
-| `T` | texture / solid color |
-| `N` | normal map on / off |
+| `T` | texture / solid color (surface in the open tab) |
+| `N` | normal map on / off (surface in the open tab) |
 | `R` | restore the initial rotation of the scene |
 | `F11` | full screen (on macOS also `Ctrl+⌘+F`) |
-| `Ctrl+T` | load a texture from a file |
-| `Ctrl+Shift+N` | load a normal map from a file |
-| `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | solid color of surface group 1, 2, 3 |
+| `Ctrl+T` | load a texture from a file (surface in the open tab) |
+| `Ctrl+Shift+N` | load a normal map from a file (surface in the open tab) |
+| `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | solid color of surface 1, 2, 3 |
 | `Ctrl+L` | light color |
 | `Ctrl+R` | restore the default light curve |
 | `F1` | help (on macOS also `⌘?`) |
@@ -210,6 +213,7 @@ The light is a point light moving along a closed Bézier curve made of `K` cubic
 
 ### Texture and normal map
 
+- Every surface has its own texture, normal map and switches; the triangles of surface `k` are filled with the settings of its tab.
 - Texture: the object color `IO` in a pixel is the texel at the interpolated `(u, v)`.
 - Normal map: the texel color `c` gives the vector `Nmap = 2c − 1` (with the sign of the `y` component changed, because maps have `y` up the image while `v` grows downwards). The modified normal vector is `N' = normalize(M · Nmap)`, where `M = [Pu, Pv, N]` is the matrix whose columns are the normalized vectors `Pu`, `Pv` and `N`.
 
