@@ -432,7 +432,10 @@ void Viewport::drawVertices(const Projection &proj, const Mesh &mesh, QPainter &
     }
 }
 
+/// Without antialiasing: at n = 50 the mesh has ~15k edges and smoothing them cost more than filling the triangles
 void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter &painter, const int colorIdx) const {
+    painter.save(); // the antialiasing hint is restored for the layers drawn after the mesh
+    painter.setRenderHint(QPainter::Antialiasing, false);
     painter.setPen(QPen(meshColor(colorIdx), 1, Qt::SolidLine));
     const auto &vertices = mesh.vertices();
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
@@ -454,6 +457,7 @@ void Viewport::drawTriangles(const Projection &proj, const Mesh &mesh, QPainter 
             QPointF(c.x, c.y));
         painter.drawLines(lines, 3);
     }
+    painter.restore();
 }
 
 void Viewport::drawControlPoints(const Projection &proj, const Mesh &mesh, QPainter &painter,
@@ -521,6 +525,9 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
     const auto &vertices = mesh.vertices();
     const bool useTexture = m_useTexture[colorIdx], useNormalMap = m_useNormalMap[colorIdx];
     const Texture &texture = m_textures[colorIdx], &normalMap = m_normalMaps[colorIdx];
+    // pixel access through one pointer: QImage::scanLine() per pixel checks for detaching every time
+    auto *const frameBits = reinterpret_cast<QRgb *>(m_frame.bits());
+    const qsizetype frameStride = m_frame.bytesPerLine() / static_cast<qsizetype>(sizeof(QRgb));
 
     for (const auto &[v1, v2, v3]: mesh.triangles()) {
         const ScreenPoint a = proj.project(vertices[v1].after.P);
@@ -557,7 +564,7 @@ void Viewport::fillTriangles(const Projection &proj, const Mesh &mesh, const Ras
 
                     const auto [red, green, blue] = m_shader.calculateColor(io, N, P);
 
-                    reinterpret_cast<QRgb *>(m_frame.scanLine(y))[x] = qRgb(
+                    frameBits[y * frameStride + x] = qRgb(
                         Shading::float2int(red),
                         Shading::float2int(green),
                         Shading::float2int(blue)
