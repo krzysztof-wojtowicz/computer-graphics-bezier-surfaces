@@ -2,6 +2,10 @@
 # to the platform's native line endings on checkout
 * text=auto
 
+# Help pages are embedded as Qt resources and parsed by tests line by line:
+# keep LF everywhere, so they are the same on every system
+*.md text eol=lf
+
 # Binary assets – never convert
 *.png binary
 *.jpg binary
