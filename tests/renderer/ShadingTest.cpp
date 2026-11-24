@@ -3,9 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <random>
+#include <span>
 
 namespace {
 constexpr ShadingColor kWhite{.r = 1.0f, .g = 1.0f, .b = 1.0f};
@@ -296,6 +298,62 @@ TEST(ShadingTest, Int2FloatAndBackIsIdentity) {
         EXPECT_EQ(Shading::float2int(Shading::int2float(c)), c);
 }
 
+// ---------- several lights ----------
+
+TEST(ShadingTest, OneLightByDefaultAndAfterSetLightPosition) {
+    Shading s;
+    EXPECT_EQ(s.lightCount(), 1);
+    const std::array<Vec3, 3> lights{Vec3{1, 0, 1}, Vec3{-1, 0, 1}, Vec3{0, 1, 1}};
+    s.setLightPositions(lights);
+    EXPECT_EQ(s.lightCount(), 3);
+    for (int i = 0; i < 3; ++i)
+        EXPECT_VEC3_EQ(s.lightPosition(i), lights[static_cast<std::size_t>(i)]);
+
+    s.setLightPosition({0, 0, 5}); // back to a single light: the other two must stop lighting
+    EXPECT_EQ(s.lightCount(), 1);
+    EXPECT_VEC3_EQ(s.lightPosition(), (Vec3{0, 0, 5}));
+    Shading single;
+    single.setLightPosition({0, 0, 5});
+    expectColorNear(s.calculateColor(kWhite, kViewer, kOrigin), single.calculateColor(kWhite, kViewer, kOrigin));
+}
+
+TEST(ShadingTest, LightsAddUp) {
+    // each light has its own L and R; diffuse and specular of all of them are summed
+    constexpr ShadingColor io{.r = 0.2f, .g = 0.1f, .b = 0.05f}; // small: the sum stays below 1, nothing clamps
+    const std::array<Vec3, 3> lights{Vec3{3, 0, 4}, Vec3{-2, 1, 5}, Vec3{0.5f, -3, 2}};
+    const Vec3 N = normalized(Vec3{0.2f, -0.1f, 1.0f});
+    const Vec3 P{0.3f, 0.4f, -0.2f};
+
+    Shading all;
+    all.setKd(0.6f);
+    all.setKs(0.7f);
+    all.setM(5.0f);
+    all.setLightPositions(lights);
+
+    ShadingColor sum{0, 0, 0};
+    for (const Vec3 &light : lights) {
+        Shading one = all;
+        one.setLightPosition(light);
+        const ShadingColor c = one.calculateColor(io, N, P);
+        EXPECT_GT(c.r, 0.0f) << "every light must contribute, else the test checks less";
+        sum = {.r = sum.r + c.r, .g = sum.g + c.g, .b = sum.b + c.b};
+    }
+    expectColorNear(all.calculateColor(io, N, P), sum);
+}
+
+TEST(ShadingTest, LightsOnOppositeSidesLightBothSlopes) {
+    // two slopes facing +x and -x: one light lights only one of them, a light on each side lights both
+    const Vec3 right = tilted(0.8f), left = tilted(-0.8f);
+    const std::array<Vec3, 2> lights{Vec3{10, 0, 1}, Vec3{-10, 0, 1}};
+    Shading s = diffuseOnly(lights[0]);
+    EXPECT_GT(s.calculateColor(kWhite, right, kOrigin).r, 0.1f);
+    EXPECT_FLOAT_EQ(s.calculateColor(kWhite, left, kOrigin).r, 0.0f);
+
+    s.setLightPositions(lights);
+    expectColorNear(s.calculateColor(kWhite, left, kOrigin), s.calculateColor(kWhite, right, kOrigin));
+    EXPECT_GT(s.calculateColor(kWhite, left, kOrigin).r, 0.1f);
+}
+
 // ---------- invariants checked by assert ----------
 
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
@@ -311,6 +369,14 @@ TEST(ShadingDeathTest, RejectsMOutsideRange) {
     Shading s;
     EXPECT_DEATH(s.setM(0.5f), "");
     EXPECT_DEATH(s.setM(101.0f), "");
+}
+
+TEST(ShadingDeathTest, RejectsLightCountOutsideRange) {
+    Shading s;
+    const std::array<Vec3, Shading::kMaxLights + 1> tooMany{};
+    EXPECT_DEATH(s.setLightPositions(std::span<const Vec3>()), "1 to kMaxLights lights");
+    EXPECT_DEATH(s.setLightPositions(tooMany), "1 to kMaxLights lights");
+    EXPECT_DEATH(static_cast<void>(s.lightPosition(1)), "light index out of range");
 }
 
 TEST(ShadingDeathTest, RejectsLightColorOutsideUnitRange) {

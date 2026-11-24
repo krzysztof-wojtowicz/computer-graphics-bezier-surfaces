@@ -48,6 +48,7 @@ At the start every surface has a solid color, the first built-in texture ("Floor
 ### Lighting
 
 - "Light path:" "Bezier" / "B-spline" – the kind of curve the light moves along: a single-segment closed Bézier curve or a closed cubic B-spline (segments in different colors). Both are built on the same control points, edited with the mouse; switching changes only the curve. "B-spline" at the start.
+- "Lights:" "1 light" / "3 lights" – one light source, or three spread evenly along the same curve (a third of a lap apart), moving together and lighting the scene from three sides. They all have the same color `IL` and their contributions add up. "1 light" at the start.
 - "kd", "ks" (from 0 to 1) – share of the diffuse and the specular term.
 - "m" (from 1 to 100) – the larger, the smaller and sharper the highlight.
 - "z" (from 0 to 20) – height of the plane the light curve lies on.
@@ -205,6 +206,8 @@ The color of every pixel is computed separately for R, G and B (values from 0 to
 I = kd · IL · IO · cos(N, L) + ks · IL · IO · cos^m(V, R)
 L = normalize(Plight − P),  V = [0, 0, 1],  R = 2·⟨N, L⟩·N − L
 ```
+
+With three light sources the diffuse and specular terms are computed for every source separately (each with its own `L` and `R`) and summed; a result above 1 is clamped to 1.
 
 Negative cosines are replaced by zero. The surfaces are open, so the lighting is two-sided: when `N` points away from the observer (`N.z < 0`), the program uses `−N`.
 

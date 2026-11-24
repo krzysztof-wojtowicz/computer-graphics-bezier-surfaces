@@ -48,6 +48,7 @@ Na starcie każda powierzchnia ma kolor jednolity, wybraną pierwszą wbudowaną
 ### Lighting
 
 - „Light path:” „Bezier” / „B-spline” – rodzaj krzywej, po której porusza się światło: jednosegmentowa zamknięta krzywa Béziera albo zamknięta krzywa B-sklejana (B-spline) stopnia 3 (segmenty w różnych kolorach). Obie są zbudowane na tych samych punktach kontrolnych, edytowanych myszą; przełączenie zmienia tylko krzywą. Na starcie „B-spline”.
+- „Lights:” „1 light” / „3 lights” – jedno źródło światła albo trzy źródła rozłożone równo na tej samej krzywej (co 1/3 okrążenia), poruszające się razem i oświetlające scenę z trzech stron. Wszystkie mają ten sam kolor `IL`, a ich wkłady się sumują. Na starcie „1 light”.
 - „kd”, „ks” (od 0 do 1) – udział składowej rozproszonej i zwierciadlanej.
 - „m” (od 1 do 100) – im większe, tym mniejszy i ostrzejszy odblask.
 - „z” (od 0 do 20) – wysokość płaszczyzny, na której leży krzywa światła.
@@ -205,6 +206,8 @@ Kolor każdego piksela liczony jest osobno dla R, G i B (wartości od 0 do 1, wy
 I = kd · IL · IO · cos(N, L) + ks · IL · IO · cos^m(V, R)
 L = normalize(Pświatła − P),  V = [0, 0, 1],  R = 2·⟨N, L⟩·N − L
 ```
+
+Przy trzech źródłach światła składniki rozproszony i zwierciadlany są liczone dla każdego źródła osobno (każde ma własne `L` i `R`) i sumowane; wynik powyżej 1 jest obcinany do 1.
 
 Ujemne cosinusy są zastępowane zerem. Powierzchnie są otwarte, więc oświetlenie jest dwustronne: gdy `N` wskazuje od obserwatora (`N.z < 0`), program używa `−N`.
 

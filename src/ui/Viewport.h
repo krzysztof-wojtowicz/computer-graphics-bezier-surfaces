@@ -43,6 +43,8 @@ public:
     static constexpr float kDefaultLightZ = 8.0f;
     /// Laps per second (8 s per lap): the paths have different numbers of segments, the speed doesn't depend on it
     static constexpr float kLightSpeed = 0.125f;
+    /// Lights on the path: one, or this many spread evenly over the lap (they light the scene from different sides)
+    static constexpr int kMaxLightCount = Shading::kMaxLights;
     static constexpr float kPickRadius = 8; // px: a press this close to a light path point drags it, else rotates
     /// Surfaces take their settings in turn: surface k uses group k % kColorCount (color, visibility,
     /// texture, normal map), each group has its own tab in the panel
@@ -85,8 +87,11 @@ public:
     [[nodiscard]] const Texture &texture(int i) const;
     [[nodiscard]] bool useNormalMap(int i) const;
     [[nodiscard]] const Texture &normalMap(int i) const;
-    /// From the path, not from the shader: valid also before the first render()
+    /// From the path, not from the shader: valid also before the first render(). The first light.
     [[nodiscard]] Vec3 lightPosition() const;
+    /// Every light: light k is k / lightCount() of a lap ahead of the first one
+    [[nodiscard]] std::vector<Vec3> lightPositions() const;
+    [[nodiscard]] int lightCount() const { return m_lightCount; }
     /// Part of the lap the light has done, in [0, 1)
     [[nodiscard]] float lightT() const { return m_lightT; }
     [[nodiscard]] bool isAnimating() const { return m_animationTimer.isActive(); }
@@ -119,6 +124,8 @@ public:
     void setLightZ(float z);
     /// Switches the curve built on the control points; the points stay. The light keeps its part of the lap.
     void setLightPathType(LightPathType type);
+    /// 1 or kMaxLightCount lights moving together along the path
+    void setLightCount(int count);
     /// Restores the default control points; keeps their height (set by the z slider) and the light's t
     void resetLightPath();
     /// Back to initialRotation(); the light path is bound to the camera, so it doesn't change
@@ -174,7 +181,8 @@ private:
     // B-spline by default: close to the circle of the earlier versions, tests rely on its shape
     LightPathType m_lightPathType = LightPathType::BSpline;
 
-    float m_lightT = 0.0f; // part of the lap, in [0, 1)
+    float m_lightT = 0.0f; // part of the lap of the first light, in [0, 1)
+    int m_lightCount = 1;
     QTimer m_animationTimer; // fires animation steps
     QElapsedTimer m_animationClock; // real time between steps, so speed doesn't depend on frame rate
     int m_resolution = Mesh::kDefaultResolution; // mesh resolution

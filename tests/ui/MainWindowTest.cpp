@@ -450,6 +450,35 @@ TEST(MainWindowLightPathTest, PathTypeRadiosMatchViewportAndSwitchIt) {
     }
 }
 
+TEST(MainWindowLightPathTest, LightCountRadiosMatchViewportAndSwitchIt) {
+    MainWindow window;
+    Viewport *viewport = findViewport(window);
+    auto *one = window.findChild<QRadioButton *>("oneLightRadio");
+    auto *many = window.findChild<QRadioButton *>("manyLightsRadio");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(one, nullptr);
+    ASSERT_NE(many, nullptr);
+    EXPECT_EQ(one->text(), "1 light");
+    EXPECT_EQ(many->text(), "3 lights");
+    EXPECT_TRUE(one->isChecked());
+    EXPECT_EQ(viewport->lightCount(), 1);
+
+    many->click();
+    EXPECT_FALSE(one->isChecked()) << "the radios exclude each other";
+    EXPECT_EQ(viewport->lightCount(), Viewport::kMaxLightCount);
+
+    // the path type radios are a separate group
+    auto *bezier = window.findChild<QRadioButton *>("bezierPathRadio");
+    ASSERT_NE(bezier, nullptr);
+    bezier->click();
+    EXPECT_TRUE(many->isChecked());
+    EXPECT_EQ(viewport->lightCount(), Viewport::kMaxLightCount);
+
+    one->click();
+    EXPECT_FALSE(many->isChecked());
+    EXPECT_EQ(viewport->lightCount(), 1);
+}
+
 TEST(MainWindowLightPathTest, MenuActionResetsDraggedPath) {
     MainWindow window;
     Viewport *viewport = findViewport(window);

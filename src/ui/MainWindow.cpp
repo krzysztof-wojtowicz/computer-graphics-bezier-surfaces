@@ -116,6 +116,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(bezierPathRadio, &QRadioButton::toggled, m_viewport, [this](const bool bezier) {
         m_viewport->setLightPathType(bezier ? Viewport::LightPathType::Bezier : Viewport::LightPathType::BSpline);
     });
+
+    // one light, or kMaxLightCount lights spread evenly along the same path
+    auto *lightCountRow = new QWidget(lightGroup); // own parent: the two radios exclude only each other
+    auto *lightCountLayout = new QHBoxLayout(lightCountRow);
+    lightCountLayout->setContentsMargins(0, 0, 0, 0);
+    lightCountLayout->addWidget(new QLabel("Lights:", lightCountRow));
+    auto *oneLightRadio = new QRadioButton("1 light", lightCountRow);
+    oneLightRadio->setObjectName("oneLightRadio");
+    auto *manyLightsRadio = new QRadioButton(QString("%1 lights").arg(Viewport::kMaxLightCount), lightCountRow);
+    manyLightsRadio->setObjectName("manyLightsRadio");
+    lightCountLayout->addWidget(oneLightRadio);
+    lightCountLayout->addWidget(manyLightsRadio);
+    lightCountLayout->addStretch();
+    lightLayout->addWidget(lightCountRow);
+    (m_viewport->lightCount() == 1 ? oneLightRadio : manyLightsRadio)->setChecked(true);
+    connect(manyLightsRadio, &QRadioButton::toggled, m_viewport, [this](const bool many) {
+        m_viewport->setLightCount(many ? Viewport::kMaxLightCount : 1);
+    });
     auto addSlider = [&](const QString &name, const int min, const int max, const float initial,
                          const float scale, void (Viewport::*setter)(float)) {
         const int decimals = scale >= 1.0f ? 0 : scale >= 0.1f ? 1 : 2;

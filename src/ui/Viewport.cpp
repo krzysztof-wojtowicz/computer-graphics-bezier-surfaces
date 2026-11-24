@@ -276,6 +276,29 @@ Vec3 Viewport::lightPosition() const {
     return path.evaluate(m_lightT * static_cast<float>(path.segments()));
 }
 
+/// Spread evenly in the lap parameter, the same one the light moves by: the lights keep their distances
+/// along the curve while they move, on both path types
+std::vector<Vec3> Viewport::lightPositions() const {
+    const ClosedCurve &path = lightPath();
+    std::vector<Vec3> positions;
+    positions.reserve(static_cast<std::size_t>(m_lightCount));
+    for (int k = 0; k < m_lightCount; ++k) {
+        float t = m_lightT + static_cast<float>(k) / static_cast<float>(m_lightCount);
+        if (t >= 1.0f) t -= 1.0f; // both terms are in [0, 1)
+        positions.push_back(path.evaluate(t * static_cast<float>(path.segments())));
+    }
+    return positions;
+}
+
+void Viewport::setLightCount(const int count) {
+    assert((count == 1 || count == kMaxLightCount) && "1 or kMaxLightCount lights!");
+    if (count == m_lightCount) return;
+    m_lightCount = count;
+
+    render();
+    update();
+}
+
 void Viewport::resetLightPath() {
     const auto points = defaultLightPathPoints(lightZ());
     m_bezierPath = ClosedBezierCurve(points);
@@ -393,8 +416,9 @@ int Viewport::pickLightPathPoint(const QPointF &pos) const {
 void Viewport::render() {
     if (m_frame.isNull()) return;
 
-    // update light position
-    m_shader.setLightPosition(lightPosition());
+    // update light positions
+    const std::vector<Vec3> lights = lightPositions();
+    m_shader.setLightPositions(lights);
 
     // fill viewport with white color
     m_frame.fill(Qt::white);
@@ -698,8 +722,9 @@ void Viewport::drawLightPathShapes(const Projection &proj, QPainter &painter) co
             painter.drawEllipse(c, kPointRadius, kPointRadius);
     }
 
-    // current light position
+    // current light positions
     painter.setPen(QPen(kLightPathColor, 1));
     painter.setBrush(lightColor());
-    painter.drawEllipse(toScreen(lightPosition()), kPointRadius * 3, kPointRadius * 3);
+    for (const Vec3 &light: lightPositions())
+        painter.drawEllipse(toScreen(light), kPointRadius * 3, kPointRadius * 3);
 }

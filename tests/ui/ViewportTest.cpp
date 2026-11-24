@@ -1861,6 +1861,88 @@ TEST(ViewportLightPathTypeTest, FullLapTakesTheSameTimeOnBothPaths) {
     }
 }
 
+// ---------- several lights on the path ----------
+
+TEST(ViewportLightCountTest, OneLightByDefault) {
+    const Viewport viewport;
+    EXPECT_EQ(viewport.lightCount(), 1);
+    const std::vector<Vec3> lights = viewport.lightPositions();
+    ASSERT_EQ(lights.size(), 1u);
+    EXPECT_VEC3_EQ(lights[0], viewport.lightPosition());
+}
+
+TEST(ViewportLightCountTest, LightsAreAThirdOfALapApartOnBothPaths) {
+    for (const auto type : kLightPathTypes) {
+        SCOPED_TRACE(typeName(type));
+        Viewport viewport;
+        viewport.setLightPathType(type);
+        viewport.setLightCount(Viewport::kMaxLightCount);
+        viewport.stepAnimation(5.0f); // t = 0.625: the third light wraps past the end of the lap
+        const ClosedCurve &path = viewport.lightPath();
+        const float t = viewport.lightT();
+        const std::vector<Vec3> lights = viewport.lightPositions();
+        ASSERT_EQ(lights.size(), static_cast<std::size_t>(Viewport::kMaxLightCount));
+        EXPECT_VEC3_EQ(lights[0], viewport.lightPosition()) << "the first light is the one that was alone";
+        for (int k = 0; k < Viewport::kMaxLightCount; ++k) {
+            const float tk = std::fmod(t + static_cast<float>(k) / Viewport::kMaxLightCount, 1.0f);
+            EXPECT_VEC3_NEAR(lights[static_cast<std::size_t>(k)],
+                             path.evaluate(tk * static_cast<float>(path.segments())), 1e-4f) << "light " << k;
+        }
+        // on the default circle a third of a lap is far: the lights are on different sides of the scene
+        for (std::size_t a = 0; a < lights.size(); ++a)
+            for (std::size_t b = a + 1; b < lights.size(); ++b)
+                EXPECT_GT(length(lights[a] - lights[b]), 5.0f) << a << ", " << b;
+    }
+}
+
+TEST(ViewportLightCountTest, LightsMoveTogetherAlongThePath) {
+    // after a third of a lap every light is where the next one was
+    for (const auto type : kLightPathTypes) {
+        SCOPED_TRACE(typeName(type));
+        Viewport viewport;
+        viewport.setLightPathType(type);
+        viewport.setLightCount(Viewport::kMaxLightCount);
+        viewport.stepAnimation(1.0f);
+        const std::vector<Vec3> before = viewport.lightPositions();
+        viewport.stepAnimation(1.0f / (Viewport::kMaxLightCount * Viewport::kLightSpeed));
+        const std::vector<Vec3> after = viewport.lightPositions();
+        for (std::size_t k = 0; k < after.size(); ++k)
+            EXPECT_VEC3_NEAR(after[k], before[(k + 1) % before.size()], 1e-3f) << "light " << k;
+    }
+}
+
+TEST(ViewportLightCountTest, MoreLightsBrightenTheSceneAndOneRestoresIt) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setKd(0.25f); // three lights stay below saturation
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.0f, 4.0f)});
+    const QImage one = showViewport(viewport, kMeshImageSize);
+
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    EXPECT_EQ(viewport.lightCount(), Viewport::kMaxLightCount);
+    const QImage three = grabImage(viewport);
+    for (const Vec3 &q : {Vec3{0, 0, 0}, Vec3{2.5f, 0, 0}, Vec3{-2.5f, 1, 0}, Vec3{0, -2.5f, 0}}) {
+        const QColor c1 = colorAt(one, sceneToScreen(q)), c3 = colorAt(three, sceneToScreen(q));
+        EXPECT_GT(c3.red() + c3.green() + c3.blue(), c1.red() + c1.green() + c1.blue() + 30)
+            << "at " << q.x << ", " << q.y;
+    }
+
+    viewport.setLightCount(1);
+    EXPECT_EQ(grabImage(viewport), one);
+}
+
+TEST(ViewportLightCountTest, EveryLightIsDrawnOnThePath) {
+    Viewport viewport;
+    showOnlyLightPath(viewport); // red light
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    const QImage img = grabImage(viewport);
+    for (const Vec3 &light : viewport.lightPositions()) {
+        const QColor c = colorAt(img, sceneToScreen(light));
+        EXPECT_TRUE(c.red() > 200 && c.green() < 60 && c.blue() < 60) << "no light marker at " << light.x << ", "
+                                                                      << light.y;
+    }
+}
+
 // ---------- 7: light animation ----------
 
 TEST(ViewportAnimationTest, StoppedByDefaultAndToggles) {
@@ -2732,6 +2814,13 @@ TEST(ViewportDeathTest, RejectsTextureAndNormalMapGroupIndexOutOfRange) {
         EXPECT_DEATH(std::ignore = viewport.useNormalMap(i), "surface group index out of range");
         EXPECT_DEATH(std::ignore = viewport.normalMap(i), "surface group index out of range");
     }
+}
+
+TEST(ViewportDeathTest, RejectsUnsupportedLightCount) {
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setLightCount(0), "1 or kMaxLightCount lights");
+    EXPECT_DEATH(viewport.setLightCount(2), "1 or kMaxLightCount lights");
+    EXPECT_DEATH(viewport.setLightCount(Viewport::kMaxLightCount + 1), "1 or kMaxLightCount lights");
 }
 
 TEST(ViewportDeathTest, RejectsLightZOutOfRange) {
