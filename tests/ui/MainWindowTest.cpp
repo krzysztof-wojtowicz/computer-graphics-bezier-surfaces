@@ -479,6 +479,59 @@ TEST(MainWindowLightPathTest, LightCountRadiosMatchViewportAndSwitchIt) {
     EXPECT_EQ(viewport->lightCount(), 1);
 }
 
+TEST(MainWindowLightPathTest, SpotSliderSetsExponentAndWorksOnlyWithSeveralLights) {
+    MainWindow window;
+    Viewport *viewport = findViewport(window);
+    const LightSlider spot = findLightSlider(window, "spot");
+    auto *one = window.findChild<QRadioButton *>("oneLightRadio");
+    auto *many = window.findChild<QRadioButton *>("manyLightsRadio");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(spot.slider, nullptr);
+    ASSERT_NE(spot.label, nullptr);
+    ASSERT_NE(one, nullptr);
+    ASSERT_NE(many, nullptr);
+    EXPECT_EQ(spot.slider->minimum(), 1);
+    EXPECT_EQ(spot.slider->maximum(), 100);
+    EXPECT_EQ(spot.slider->value(), 10);
+    EXPECT_EQ(spot.label->text(), "spot = 10");
+    EXPECT_FALSE(spot.slider->isEnabled()) << "a single light is not a spotlight";
+
+    many->click();
+    EXPECT_TRUE(spot.slider->isEnabled());
+    const float kd = viewport->kd(), m = viewport->m(), z = viewport->lightZ();
+    spot.slider->setValue(37);
+    EXPECT_FLOAT_EQ(viewport->spotExponent(), 37.0f);
+    EXPECT_EQ(spot.label->text(), "spot = 37");
+    EXPECT_FLOAT_EQ(viewport->kd(), kd);
+    EXPECT_FLOAT_EQ(viewport->m(), m);
+    EXPECT_FLOAT_EQ(viewport->lightZ(), z);
+
+    one->click();
+    EXPECT_FALSE(spot.slider->isEnabled());
+}
+
+TEST(MainWindowLightPathTest, LightColorWorksOnlyForTheSingleLight) {
+    MainWindow window;
+    auto *button = window.findChild<QPushButton *>("lightColorButton");
+    auto *action = window.findChild<QAction *>("lightColorAction");
+    auto *one = window.findChild<QRadioButton *>("oneLightRadio");
+    auto *many = window.findChild<QRadioButton *>("manyLightsRadio");
+    ASSERT_NE(button, nullptr);
+    ASSERT_NE(action, nullptr);
+    ASSERT_NE(one, nullptr);
+    ASSERT_NE(many, nullptr);
+    EXPECT_TRUE(button->isEnabled());
+    EXPECT_TRUE(action->isEnabled());
+
+    many->click();
+    EXPECT_FALSE(button->isEnabled()) << "the spotlights have fixed colors";
+    EXPECT_FALSE(action->isEnabled());
+
+    one->click();
+    EXPECT_TRUE(button->isEnabled());
+    EXPECT_TRUE(action->isEnabled());
+}
+
 TEST(MainWindowLightPathTest, MenuActionResetsDraggedPath) {
     MainWindow window;
     Viewport *viewport = findViewport(window);
@@ -1346,6 +1399,19 @@ TEST(MainWindowLayoutTest, PanelFitsInDefaultWindow) {
     ASSERT_NE(animation, nullptr);
     EXPECT_LE(inWindow(window, animation).bottom(), window.centralWidget()->geometry().bottom());
     EXPECT_LE(window.height(), 800) << "the window didn't have to grow for the panel";
+}
+
+TEST(MainWindowLayoutTest, ZAndSpotSlidersShareRowHalfEach) {
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *z = window.findChild<QSlider *>("zSlider");
+    auto *spot = window.findChild<QSlider *>("spotSlider");
+    ASSERT_NE(z, nullptr);
+    ASSERT_NE(spot, nullptr);
+    EXPECT_TRUE(sameRow(window, z, spot));
+    EXPECT_GT(inWindow(window, spot).left(), inWindow(window, z).right()) << "spot right of z";
+    EXPECT_NEAR(z->width(), spot->width(), 2);
 }
 
 TEST(MainWindowLayoutTest, LightColorAndAnimationButtonsShareRowHalfEach) {

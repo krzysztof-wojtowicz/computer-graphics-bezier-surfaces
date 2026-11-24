@@ -1911,35 +1911,175 @@ TEST(ViewportLightCountTest, LightsMoveTogetherAlongThePath) {
     }
 }
 
-TEST(ViewportLightCountTest, MoreLightsBrightenTheSceneAndOneRestoresIt) {
-    Viewport viewport;
+namespace {
+/// Diffuse-only fill of a white square around the scene centre: the pixel colors are the colors of the light
+void showWhiteSquareLitByDiffuse(Viewport &viewport, const float kd) {
     showOnlyDiffuseFill(viewport);
-    viewport.setKd(0.25f); // three lights stay below saturation
-    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.0f, 4.0f)});
-    const QImage one = showViewport(viewport, kMeshImageSize);
-
-    viewport.setLightCount(Viewport::kMaxLightCount);
-    EXPECT_EQ(viewport.lightCount(), Viewport::kMaxLightCount);
-    const QImage three = grabImage(viewport);
-    for (const Vec3 &q : {Vec3{0, 0, 0}, Vec3{2.5f, 0, 0}, Vec3{-2.5f, 1, 0}, Vec3{0, -2.5f, 0}}) {
-        const QColor c1 = colorAt(one, sceneToScreen(q)), c3 = colorAt(three, sceneToScreen(q));
-        EXPECT_GT(c3.red() + c3.green() + c3.blue(), c1.red() + c1.green() + c1.blue() + 30)
-            << "at " << q.x << ", " << q.y;
-    }
-
-    viewport.setLightCount(1);
-    EXPECT_EQ(grabImage(viewport), one);
+    viewport.setKd(kd);
+    viewport.setSurfaceColor(0, Qt::white);
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.5f, 4.5f)});
+    showViewport(viewport, kMeshImageSize);
 }
 
-TEST(ViewportLightCountTest, EveryLightIsDrawnOnThePath) {
+/// Unit screen direction of the axis of the spotlight at `light` and the length of its arrow (Viewport's rule)
+std::pair<QPointF, double> spotArrow(const Vec3 &light) {
+    const Vec3 axis = normalized(Shading::kSpotTarget - light);
+    const QPointF from = sceneToScreen(light), to = sceneToScreen(light + axis);
+    const QPointF d = to - from;
+    return {d / std::hypot(d.x(), d.y()), Viewport::kSpotArrowLength * std::hypot(axis.x, axis.y)};
+}
+} // namespace
+
+TEST(ViewportLightCountTest, SpotlightsHaveFixedRedGreenBlueColors) {
     Viewport viewport;
-    showOnlyLightPath(viewport); // red light
+    ASSERT_EQ(viewport.lightColors(), std::vector<QColor>{QColor(Qt::white)});
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    const std::vector<QColor> expected{QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)};
+    EXPECT_EQ(viewport.lightColors(), expected);
+
+    viewport.setLightColor(QColor(200, 150, 50)); // kept for the single light, not used by the spotlights
+    EXPECT_EQ(viewport.lightColors(), expected);
+    EXPECT_EQ(viewport.lightColor(), QColor(200, 150, 50));
+    viewport.setLightCount(1);
+    EXPECT_EQ(viewport.lightColors(), std::vector<QColor>{QColor(200, 150, 50)});
+}
+
+TEST(ViewportLightCountTest, ChosenLightColorDoesNotChangeTheSpotlights) {
+    Viewport viewport;
+    showWhiteSquareLitByDiffuse(viewport, 0.3f);
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    const QImage spot = grabImage(viewport);
+    viewport.setLightColor(QColor(255, 255, 0));
+    EXPECT_EQ(grabImage(viewport), spot);
+
+    // the single light uses the chosen color: no blue on the white square
+    viewport.setLightCount(1);
+    const QColor c = colorAt(grabImage(viewport), sceneToScreen({0.0f, 0.0f, 0.0f}));
+    EXPECT_GT(c.red(), 50);
+    EXPECT_EQ(c.red(), c.green());
+    EXPECT_EQ(c.blue(), 0);
+}
+
+TEST(ViewportLightCountTest, EachSpotlightLightsInItsOwnColor) {
+    // a white square: under spotlight k its channel is the strongest, and in the centre (on every axis,
+    // equally far from all three) the colors add up to gray
+    Viewport viewport;
+    showWhiteSquareLitByDiffuse(viewport, 0.5f);
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    viewport.setSpotExponent(1.0f); // wide beams: the square is lit everywhere
+    viewport.stepAnimation(1.0f);
+    const QImage img = grabImage(viewport);
+
+    const QColor centre = colorAt(img, sceneToScreen({0.0f, 0.0f, 0.0f}));
+    EXPECT_GT(centre.red(), 50);
+    EXPECT_NEAR(centre.green(), centre.red(), 2);
+    EXPECT_NEAR(centre.blue(), centre.red(), 2);
+
+    const std::vector<Vec3> lights = viewport.lightPositions();
+    for (std::size_t k = 0; k < lights.size(); ++k) {
+        SCOPED_TRACE(k);
+        const QColor c = colorAt(img, sceneToScreen({0.8f * lights[k].x, 0.8f * lights[k].y, 0.0f}));
+        const std::array<int, 3> rgb{c.red(), c.green(), c.blue()};
+        for (std::size_t other = 0; other < 3; ++other)
+            if (other != k)
+                EXPECT_GT(rgb[k], rgb[other] + 10) << "channel " << other;
+    }
+
+    viewport.setLightCount(1); // there and back: the spotlights get their colors again
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    EXPECT_EQ(grabImage(viewport), img);
+}
+
+TEST(ViewportLightCountTest, EveryLightIsDrawnOnThePathInItsColor) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
     viewport.setLightCount(Viewport::kMaxLightCount);
     const QImage img = grabImage(viewport);
+    const std::vector<Vec3> lights = viewport.lightPositions();
+    for (std::size_t k = 0; k < lights.size(); ++k) {
+        const QColor c = colorAt(img, sceneToScreen(lights[k]));
+        EXPECT_EQ(c, Viewport::kSpotlightColors[k]) << "light " << k;
+    }
+}
+
+TEST(ViewportLightCountTest, SpotlightArrowsPointAlongTheBeam) {
+    Viewport viewport;
+    showOnlyLightPath(viewport);
+    viewport.stepAnimation(1.0f);
+    const QImage single = grabImage(viewport);
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    const QImage img = grabImage(viewport);
+
+    const std::vector<Vec3> lights = viewport.lightPositions();
+    for (std::size_t k = 0; k < lights.size(); ++k) {
+        SCOPED_TRACE(k);
+        const auto [dir, length] = spotArrow(lights[k]);
+        ASSERT_GT(length, 10.0) << "the default path is beside the target: the beam is not vertical";
+        const QPointF marker = sceneToScreen(lights[k]);
+        const QPointF onShaft = marker + dir * (3 * 3 + 0.6 * length); // kPointRadius = 3, the marker radius is 3x
+        const QPointF behind = marker - dir * (3 * 3 + 0.6 * length);
+        EXPECT_TRUE(hueNear(img, onShaft, Viewport::kSpotlightColors[k])) << "no arrow towards the beam";
+        EXPECT_FALSE(hueNear(img, behind, Viewport::kSpotlightColors[k], 1)) << "arrow on the wrong side";
+        if (k == 0)
+            EXPECT_TRUE(isWhite(single, static_cast<int>(onShaft.x()), static_cast<int>(onShaft.y())))
+                << "a single light is not a spotlight: no arrow";
+    }
+
+    // the light path toggles the arrows with the rest of it
+    viewport.setShowLightPath(false);
+    const QImage hidden = grabImage(viewport);
+    const auto [dir, length] = spotArrow(lights[0]);
+    const QPointF onShaft = sceneToScreen(lights[0]) + dir * (3 * 3 + 0.6 * length);
+    EXPECT_FALSE(hueNear(hidden, onShaft, Viewport::kSpotlightColors[0]));
+}
+
+TEST(ViewportLightCountTest, OnlySeveralLightsAreSpotlights) {
+    Viewport viewport;
+    EXPECT_FALSE(viewport.spotlights());
+    EXPECT_FLOAT_EQ(viewport.spotExponent(), Shading::kDefaultSpotExponent);
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    EXPECT_TRUE(viewport.spotlights());
+    viewport.setLightCount(1);
+    EXPECT_FALSE(viewport.spotlights());
+}
+
+TEST(ViewportLightCountTest, SpotExponentChangesOnlyTheSpotlights) {
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.0f, 4.0f)});
+    const QImage point = showViewport(viewport, kMeshImageSize);
+    viewport.setSpotExponent(50.0f);
+    EXPECT_FLOAT_EQ(viewport.spotExponent(), 50.0f);
+    EXPECT_EQ(grabImage(viewport), point) << "a single light is a point light: no beam";
+
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    const QImage narrow = grabImage(viewport);
+    viewport.setSpotExponent(5.0f);
+    EXPECT_NE(grabImage(viewport), narrow);
+}
+
+TEST(ViewportLightCountTest, SpotlightsLightTheSceneCentre) {
+    // a narrow beam: the centre (on every axis) stays lit, the plane under a spotlight (far off its axis) goes dark;
+    // point lights light the plane under them more than the centre
+    Viewport viewport;
+    showOnlyDiffuseFill(viewport);
+    viewport.setKd(0.3f); // three lights on the axis stay below saturation
+    viewport.setSurfaces({sceneRect(viewport, {0.0f, 0.0f, 0.0f}, 4.5f, 4.5f)});
+    showViewport(viewport, kMeshImageSize);
+    viewport.setLightCount(Viewport::kMaxLightCount);
+    viewport.setSpotExponent(Shading::kMaxSpotExponent);
+    viewport.stepAnimation(1.0f);
+    const QImage img = grabImage(viewport);
+
+    const auto brightness = [&img](const Vec3 &q) {
+        const QColor c = colorAt(img, sceneToScreen(q));
+        return c.red() + c.green() + c.blue();
+    };
+    const int centre = brightness({0.0f, 0.0f, 0.0f});
+    EXPECT_GT(centre, 100);
     for (const Vec3 &light : viewport.lightPositions()) {
-        const QColor c = colorAt(img, sceneToScreen(light));
-        EXPECT_TRUE(c.red() > 200 && c.green() < 60 && c.blue() < 60) << "no light marker at " << light.x << ", "
-                                                                      << light.y;
+        const Vec3 under{0.8f * light.x, 0.8f * light.y, 0.0f}; // inside the square, under the spotlight
+        EXPECT_LT(brightness(under), centre / 4) << "under " << light.x << ", " << light.y;
     }
 }
 
@@ -2814,6 +2954,12 @@ TEST(ViewportDeathTest, RejectsTextureAndNormalMapGroupIndexOutOfRange) {
         EXPECT_DEATH(std::ignore = viewport.useNormalMap(i), "surface group index out of range");
         EXPECT_DEATH(std::ignore = viewport.normalMap(i), "surface group index out of range");
     }
+}
+
+TEST(ViewportDeathTest, RejectsSpotExponentOutOfRange) {
+    Viewport viewport;
+    EXPECT_DEATH(viewport.setSpotExponent(0.0f), "spot exponent out of range");
+    EXPECT_DEATH(viewport.setSpotExponent(101.0f), "spot exponent out of range");
 }
 
 TEST(ViewportDeathTest, RejectsUnsupportedLightCount) {

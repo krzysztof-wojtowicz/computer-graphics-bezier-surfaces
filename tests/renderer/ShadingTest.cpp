@@ -354,6 +354,115 @@ TEST(ShadingTest, LightsOnOppositeSidesLightBothSlopes) {
     EXPECT_GT(s.calculateColor(kWhite, left, kOrigin).r, 0.1f);
 }
 
+// ---------- spotlights: IL(P) = IL * cos^k(alpha), aimed at the origin ----------
+
+namespace {
+Shading diffuseSpotlight(const Vec3 &light, const float k) {
+    Shading s = diffuseOnly(light);
+    s.setSpotlights(true);
+    s.setSpotExponent(k);
+    return s;
+}
+} // namespace
+
+TEST(ShadingTest, PointLightsByDefault) {
+    const Shading s;
+    EXPECT_FALSE(s.spotlights());
+    EXPECT_FLOAT_EQ(s.spotExponent(), Shading::kDefaultSpotExponent);
+    EXPECT_FLOAT_EQ(Shading::kDefaultSpotExponent, 10.0f);
+}
+
+TEST(ShadingTest, SpotFactorIsOneOnTheAxisAndCosPowerKOffIt) {
+    const Vec3 light{0.0f, 0.0f, 5.0f};
+    const Shading s = diffuseSpotlight(light, 10.0f);
+    EXPECT_NEAR(s.spotFactor(light, kOrigin), 1.0f, kEps); // the target itself is on the axis
+    EXPECT_NEAR(s.spotFactor(light, {0.0f, 0.0f, -3.0f}), 1.0f, kEps); // beyond the target, still on the axis
+    for (const float x : {1.0f, 2.5f, 5.0f}) {
+        SCOPED_TRACE(x);
+        const float cosAlpha = 5.0f / std::sqrt(25.0f + x * x); // angle at the light, in the triangle light-O-P
+        EXPECT_NEAR(s.spotFactor(light, {x, 0.0f, 0.0f}), std::pow(cosAlpha, 10.0f), kEps);
+        EXPECT_NEAR(s.spotFactor(light, {0.0f, -x, 0.0f}), std::pow(cosAlpha, 10.0f), kEps) << "symmetric";
+    }
+}
+
+TEST(ShadingTest, SpotlightAxisAlwaysPointsAtTheOrigin) {
+    // wherever the spotlight is, the origin is on its axis and a point at 90 degrees from the axis is dark
+    const Shading s = diffuseSpotlight({}, 10.0f);
+    for (const Vec3 &light : {Vec3{4, 0, 8}, Vec3{-3, 2, 6}, Vec3{0, -4.3f, 1}}) {
+        EXPECT_NEAR(s.spotFactor(light, kOrigin), 1.0f, kEps);
+        const Vec3 side = cross(light, Vec3{0.3f, 1.0f, 0.2f}); // perpendicular to the axis
+        EXPECT_NEAR(s.spotFactor(light, light + side), 0.0f, kEps);
+        EXPECT_FLOAT_EQ(s.spotFactor(light, 2.0f * light), 0.0f) << "behind the spotlight";
+    }
+}
+
+TEST(ShadingTest, LargerSpotExponentNarrowsTheBeam) {
+    const Vec3 light{0.0f, 0.0f, 5.0f}, offAxis{2.0f, 0.0f, 0.0f};
+    float previous = 2.0f;
+    for (const float k : {1.0f, 10.0f, 50.0f, 100.0f}) {
+        const float f = diffuseSpotlight(light, k).spotFactor(light, offAxis);
+        EXPECT_LT(f, previous) << "k = " << k;
+        previous = f;
+    }
+}
+
+TEST(ShadingTest, SpotlightScalesBothTermsOfEveryLight) {
+    constexpr ShadingColor io{.r = 0.2f, .g = 0.1f, .b = 0.05f};
+    const std::array<Vec3, 3> lights{Vec3{3, 0, 4}, Vec3{-2, 1, 5}, Vec3{0.5f, -3, 2}};
+    const Vec3 N = normalized(Vec3{0.2f, -0.1f, 1.0f});
+    const Vec3 P{0.3f, 0.4f, -0.2f};
+
+    Shading spot;
+    spot.setKd(0.6f);
+    spot.setKs(0.7f);
+    spot.setM(5.0f);
+    spot.setSpotExponent(7.0f);
+    spot.setSpotlights(true);
+    spot.setLightPositions(lights);
+
+    ShadingColor sum{0, 0, 0};
+    for (const Vec3 &light : lights) {
+        Shading point = spot;
+        point.setSpotlights(false);
+        point.setLightPosition(light);
+        const ShadingColor c = point.calculateColor(io, N, P);
+        const float f = spot.spotFactor(light, P);
+        EXPECT_GT(f, 0.01f);
+        EXPECT_LT(f, 0.99f) << "P off every axis, else the factor checks nothing";
+        sum = {.r = sum.r + f * c.r, .g = sum.g + f * c.g, .b = sum.b + f * c.b};
+    }
+    expectColorNear(spot.calculateColor(io, N, P), sum);
+}
+
+TEST(ShadingTest, EveryLightHasItsOwnColor) {
+    // red light on the right, blue on the left: each slope gets only the color of the light facing it
+    const Vec3 right = tilted(0.8f), left = tilted(-0.8f);
+    const std::array<Vec3, 2> lights{Vec3{10, 0, 1}, Vec3{-10, 0, 1}};
+    const std::array<ShadingColor, 2> colors{ShadingColor{1, 0, 0}, ShadingColor{0, 0, 1}};
+    Shading s = diffuseOnly(lights[0]);
+    s.setLightPositions(lights);
+    s.setLightColors(colors);
+    EXPECT_FLOAT_EQ(s.il(0).r, 1.0f);
+    EXPECT_FLOAT_EQ(s.il(1).b, 1.0f);
+
+    const ShadingColor r = s.calculateColor(kWhite, right, kOrigin), l = s.calculateColor(kWhite, left, kOrigin);
+    EXPECT_GT(r.r, 0.1f);
+    EXPECT_FLOAT_EQ(r.g, 0.0f);
+    EXPECT_FLOAT_EQ(r.b, 0.0f);
+    EXPECT_FLOAT_EQ(l.r, 0.0f);
+    EXPECT_NEAR(l.b, r.r, kEps);
+
+    // facing up: both lights reach it, red + blue
+    const ShadingColor up = s.calculateColor(kWhite, kViewer, kOrigin);
+    EXPECT_GT(up.r, 0.0f);
+    EXPECT_NEAR(up.r, up.b, kEps);
+    EXPECT_FLOAT_EQ(up.g, 0.0f);
+
+    s.setIl(kWhite); // one color for all lights again
+    expectColorNear(s.il(0), kWhite);
+    expectColorNear(s.il(1), kWhite);
+}
+
 // ---------- invariants checked by assert ----------
 
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
@@ -377,6 +486,21 @@ TEST(ShadingDeathTest, RejectsLightCountOutsideRange) {
     EXPECT_DEATH(s.setLightPositions(std::span<const Vec3>()), "1 to kMaxLights lights");
     EXPECT_DEATH(s.setLightPositions(tooMany), "1 to kMaxLights lights");
     EXPECT_DEATH(static_cast<void>(s.lightPosition(1)), "light index out of range");
+}
+
+TEST(ShadingDeathTest, RejectsSpotExponentOutsideRange) {
+    Shading s;
+    EXPECT_DEATH(s.setSpotExponent(Shading::kMinSpotExponent - 0.5f), "spot exponent out of range");
+    EXPECT_DEATH(s.setSpotExponent(Shading::kMaxSpotExponent + 1.0f), "spot exponent out of range");
+}
+
+TEST(ShadingDeathTest, RejectsInvalidLightColors) {
+    Shading s;
+    const std::array<ShadingColor, 2> bad{ShadingColor{1, 1, 1}, ShadingColor{0, 1.5f, 0}};
+    const std::array<ShadingColor, Shading::kMaxLights + 1> tooMany{};
+    EXPECT_DEATH(s.setLightColors(bad), "light color out of");
+    EXPECT_DEATH(s.setLightColors(tooMany), "1 to kMaxLights light colors");
+    EXPECT_DEATH(static_cast<void>(s.il(Shading::kMaxLights)), "light index out of range");
 }
 
 TEST(ShadingDeathTest, RejectsLightColorOutsideUnitRange) {

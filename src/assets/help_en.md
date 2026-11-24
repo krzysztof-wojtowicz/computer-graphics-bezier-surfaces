@@ -48,11 +48,12 @@ At the start every surface has a solid color, the first built-in texture ("Floor
 ### Lighting
 
 - "Light path:" "Bezier" / "B-spline" – the kind of curve the light moves along: a single-segment closed Bézier curve or a closed cubic B-spline (segments in different colors). Both are built on the same control points, edited with the mouse; switching changes only the curve. "B-spline" at the start.
-- "Lights:" "1 light" / "3 lights" – one light source, or three spread evenly along the same curve (a third of a lap apart), moving together and lighting the scene from three sides. They all have the same color `IL` and their contributions add up. "1 light" at the start.
+- "Lights:" "1 light" / "3 lights" – one light source, or three spread evenly along the same curve (a third of a lap apart), moving together and lighting the scene from three sides. The three sources are spotlights always aimed at the point (0, 0, 0) of the scene, with fixed colors: red, green and blue (each at full); an arrow at every spotlight shows where it shines (the shorter, the more downwards). A single source shines in all directions as before, in the chosen color. They all have the same color `IL` and their contributions add up. "1 light" at the start.
 - "kd", "ks" (from 0 to 1) – share of the diffuse and the specular term.
 - "m" (from 1 to 100) – the larger, the smaller and sharper the highlight.
 - "z" (from 0 to 20) – height of the plane the light curve lies on.
-- "Light color..." – the light color `IL` (white by default).
+- "spot" (from 1 to 100, 10 by default) – exponent `k` of the spotlight beam `I = IL · cos^k(α)`: the larger, the narrower and more focused the spot of light. Active only with "3 lights".
+- "Light color..." – the light color `IL` (white by default); only for the single source, inactive with "3 lights".
 - "Stop animation" / "Start animation" – stops and resumes the moving light.
 
 ## Menu
@@ -208,6 +209,14 @@ L = normalize(Plight − P),  V = [0, 0, 1],  R = 2·⟨N, L⟩·N − L
 ```
 
 With three light sources the diffuse and specular terms are computed for every source separately (each with its own `L` and `R`) and summed; a result above 1 is clamped to 1.
+
+The three sources are spotlights (Warn model): each has an axis `D = normalize((0, 0, 0) − Pspotlight)`, and only a part of its light reaches a point `P`:
+
+```
+IL(P) = IL · cos^k(α),  cos(α) = ⟨D, normalize(P − Pspotlight)⟩
+```
+
+On the spotlight axis (`α = 0`) the light is full, the farther from the axis, the weaker, and from 90° on it doesn't reach at all (negative cosine → 0). `IL` is here the fixed color of the spotlight (red, green or blue), and `IL(P)` replaces `IL` in both terms of the formula for that spotlight; the exponent `k` is set by the "spot" slider.
 
 Negative cosines are replaced by zero. The surfaces are open, so the lighting is two-sided: when `N` points away from the observer (`N.z < 0`), the program uses `−N`.
 

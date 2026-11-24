@@ -3,6 +3,7 @@
 #include "ui/ImageLoader.h"
 
 #include <QGridLayout>
+#include <QBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
@@ -135,15 +136,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         m_viewport->setLightCount(many ? Viewport::kMaxLightCount : 1);
     });
     auto addSlider = [&](const QString &name, const int min, const int max, const float initial,
-                         const float scale, void (Viewport::*setter)(float)) {
+                         const float scale, void (Viewport::*setter)(float), QBoxLayout *into) {
         const int decimals = scale >= 1.0f ? 0 : scale >= 0.1f ? 1 : 2;
         auto *label = new QLabel(QString("%1 = %2").arg(name).arg(initial, 0, 'f', decimals), lightGroup);
         auto *slider = new QSlider(Qt::Horizontal, lightGroup);
         slider->setObjectName(name + "Slider");
         slider->setRange(min, max);
         slider->setValue(static_cast<int>(std::lround(initial / scale)));
-        lightLayout->addWidget(label);
-        lightLayout->addWidget(slider);
+        into->addWidget(label);
+        into->addWidget(slider);
 
         connect(slider, &QSlider::valueChanged, m_viewport, [this, setter, scale](const int value) {
             (m_viewport->*setter)(static_cast<float>(value) * scale);
@@ -152,13 +153,27 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             label->setText(QString("%1 = %2").arg(name).arg(static_cast<float>(value) * scale, 0, 'f', decimals));
         });
     };
-    addSlider("kd", 0, 100, m_viewport->kd(), 0.01f, &Viewport::setKd);
-    addSlider("ks", 0, 100, m_viewport->ks(), 0.01f, &Viewport::setKs);
-    addSlider("m", 1, 100, m_viewport->m(), 1.0f, &Viewport::setM);
+    addSlider("kd", 0, 100, m_viewport->kd(), 0.01f, &Viewport::setKd, lightLayout);
+    addSlider("ks", 0, 100, m_viewport->ks(), 0.01f, &Viewport::setKs, lightLayout);
+    addSlider("m", 1, 100, m_viewport->m(), 1.0f, &Viewport::setM, lightLayout);
+
+    // z and spot share a row, half each: one more full-width slider wouldn't fit in the default window
+    auto *zSpotRow = new QHBoxLayout();
+    auto *zColumn = new QVBoxLayout();
+    auto *spotColumn = new QVBoxLayout();
+    zSpotRow->addLayout(zColumn, 1);
+    zSpotRow->addLayout(spotColumn, 1);
+    lightLayout->addLayout(zSpotRow);
     constexpr float kLightZStep = 0.1f;
     addSlider("z", static_cast<int>(std::lround(Viewport::kMinLightZ / kLightZStep)),
               static_cast<int>(std::lround(Viewport::kMaxLightZ / kLightZStep)),
-              m_viewport->lightZ(), kLightZStep, &Viewport::setLightZ);
+              m_viewport->lightZ(), kLightZStep, &Viewport::setLightZ, zColumn);
+    // spotlight beam: I = IL * cos^k(alpha); only the 3 lights are spotlights, so the slider works only for them
+    addSlider("spot", static_cast<int>(Shading::kMinSpotExponent), static_cast<int>(Shading::kMaxSpotExponent),
+              m_viewport->spotExponent(), 1.0f, &Viewport::setSpotExponent, spotColumn);
+    auto *spotSlider = lightGroup->findChild<QSlider *>("spotSlider");
+    spotSlider->setEnabled(m_viewport->spotlights());
+    connect(manyLightsRadio, &QRadioButton::toggled, spotSlider, &QSlider::setEnabled);
 
     // the button shows the current light color as an icon; the same dialog is also in the menu
     m_lightColorButton = new QPushButton("Light color...", lightGroup);
@@ -277,6 +292,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *lightColorAction = addAction(lightingMenu, "Light color...", "lightColorAction",
                                        QKeySequence(Qt::CTRL | Qt::Key_L));
     connect(lightColorAction, &QAction::triggered, this, &MainWindow::chooseLightColor);
+    // the spotlights have fixed colors: the chosen color is only for the single light
+    lightColorAction->setEnabled(!manyLightsRadio->isChecked());
+    m_lightColorButton->setEnabled(!manyLightsRadio->isChecked());
+    connect(manyLightsRadio, &QRadioButton::toggled, lightColorAction, [lightColorAction, this](const bool many) {
+        lightColorAction->setEnabled(!many);
+        m_lightColorButton->setEnabled(!many);
+    });
     auto *resetLightPathAction = addAction(lightingMenu, "Reset light path", "resetLightPathAction",
                                            QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(resetLightPathAction, &QAction::triggered, m_viewport, &Viewport::resetLightPath);

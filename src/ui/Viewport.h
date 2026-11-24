@@ -45,6 +45,12 @@ public:
     static constexpr float kLightSpeed = 0.125f;
     /// Lights on the path: one, or this many spread evenly over the lap (they light the scene from different sides)
     static constexpr int kMaxLightCount = Shading::kMaxLights;
+    /// Fixed colors of the spotlights (light k takes color k), each channel at full: the chosen light color
+    /// applies only to the single light
+    static constexpr std::array<QColor, kMaxLightCount> kSpotlightColors = {
+        QColor(255, 0, 0), QColor(0, 255, 0), QColor(0, 0, 255)};
+    /// px: arrow of a spotlight pointing straight along the screen; shorter the more the beam points down
+    static constexpr float kSpotArrowLength = 60;
     static constexpr float kPickRadius = 8; // px: a press this close to a light path point drags it, else rotates
     /// Surfaces take their settings in turn: surface k uses group k % kColorCount (color, visibility,
     /// texture, normal map), each group has its own tab in the panel
@@ -75,7 +81,10 @@ public:
     [[nodiscard]] float kd() const { return m_shader.kd(); }
     [[nodiscard]] float ks() const { return m_shader.ks(); }
     [[nodiscard]] float m() const { return m_shader.m(); }
-    [[nodiscard]] QColor lightColor() const;
+    /// The color chosen for the single light (spotlights have kSpotlightColors)
+    [[nodiscard]] QColor lightColor() const { return m_lightColor; }
+    /// Color of every light, in the order of lightPositions()
+    [[nodiscard]] std::vector<QColor> lightColors() const;
     /// Fill color i, the polygon and mesh shades are derived from it
     [[nodiscard]] QColor surfaceColor(int i) const;
     /// Surfaces are grouped like their colors: switch i shows or hides surfaces i, i + kColorCount, ...
@@ -92,6 +101,9 @@ public:
     /// Every light: light k is k / lightCount() of a lap ahead of the first one
     [[nodiscard]] std::vector<Vec3> lightPositions() const;
     [[nodiscard]] int lightCount() const { return m_lightCount; }
+    /// Several lights are spotlights aimed at the scene centre, a single light is a point light
+    [[nodiscard]] bool spotlights() const { return m_lightCount > 1; }
+    [[nodiscard]] float spotExponent() const { return m_shader.spotExponent(); }
     /// Part of the lap the light has done, in [0, 1)
     [[nodiscard]] float lightT() const { return m_lightT; }
     [[nodiscard]] bool isAnimating() const { return m_animationTimer.isActive(); }
@@ -126,6 +138,8 @@ public:
     void setLightPathType(LightPathType type);
     /// 1 or kMaxLightCount lights moving together along the path
     void setLightCount(int count);
+    /// k in I = IL * cos^k(alpha) of the spotlights; changes the image only with several lights
+    void setSpotExponent(float k);
     /// Restores the default control points; keeps their height (set by the z slider) and the light's t
     void resetLightPath();
     /// Back to initialRotation(); the light path is bound to the camera, so it doesn't change
@@ -169,6 +183,7 @@ private:
     Vec3 m_dragOffset; // point - mouse in scene units, so the point doesn't jump to the cursor when grabbed
     ZBuffer m_zbuffer; // sized in resizeEvent, like m_frame
     Shading m_shader; // shader for fill color calculation with light model
+    QColor m_lightColor = Qt::white; // IL of the single light; render() passes the colors of the lights to m_shader
     // per group, like the colors; Viewport doesn't load files, MainWindow sets the images
     std::array<Texture, kColorCount> m_textures{}; // 1x1 white until MainWindow sets one
     std::array<Texture, kColorCount> m_normalMaps = {kFlatNormalMap, kFlatNormalMap, kFlatNormalMap};
@@ -209,6 +224,7 @@ private:
     void fillTriangles(const Projection &proj, const Mesh &mesh, const Rasterizer &raster, int colorIdx);
     void drawLightPath(const Projection &proj, QPainter &painter) const;
     void drawLightPathShapes(const Projection &proj, QPainter &painter) const;
+    void drawSpotArrow(const Projection &proj, QPainter &painter, const Vec3 &light, const QColor &color) const;
 
     // --- LIGHT PATH EDITING ---
     [[nodiscard]] static std::vector<Vec3> defaultLightPathPoints(float z);

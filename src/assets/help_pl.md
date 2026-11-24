@@ -48,11 +48,12 @@ Na starcie każda powierzchnia ma kolor jednolity, wybraną pierwszą wbudowaną
 ### Lighting
 
 - „Light path:” „Bezier” / „B-spline” – rodzaj krzywej, po której porusza się światło: jednosegmentowa zamknięta krzywa Béziera albo zamknięta krzywa B-sklejana (B-spline) stopnia 3 (segmenty w różnych kolorach). Obie są zbudowane na tych samych punktach kontrolnych, edytowanych myszą; przełączenie zmienia tylko krzywą. Na starcie „B-spline”.
-- „Lights:” „1 light” / „3 lights” – jedno źródło światła albo trzy źródła rozłożone równo na tej samej krzywej (co 1/3 okrążenia), poruszające się razem i oświetlające scenę z trzech stron. Wszystkie mają ten sam kolor `IL`, a ich wkłady się sumują. Na starcie „1 light”.
+- „Lights:” „1 light” / „3 lights” – jedno źródło światła albo trzy źródła rozłożone równo na tej samej krzywej (co 1/3 okrążenia), poruszające się razem i oświetlające scenę z trzech stron. Przy trzech źródłach są to reflektory skierowane zawsze w punkt (0, 0, 0) sceny, o stałych kolorach: czerwony, zielony i niebieski (każdy z pełną składową); strzałka przy każdym reflektorze pokazuje, w którą stronę świeci (im krótsza, tym bardziej w dół). Pojedyncze źródło świeci jak dotąd we wszystkie strony, w wybranym kolorze. Wszystkie mają ten sam kolor `IL`, a ich wkłady się sumują. Na starcie „1 light”.
 - „kd”, „ks” (od 0 do 1) – udział składowej rozproszonej i zwierciadlanej.
 - „m” (od 1 do 100) – im większe, tym mniejszy i ostrzejszy odblask.
 - „z” (od 0 do 20) – wysokość płaszczyzny, na której leży krzywa światła.
-- „Light color...” – kolor światła `IL` (domyślnie biały).
+- „spot” (od 1 do 100, domyślnie 10) – wykładnik `k` wiązki reflektorów `I = IL · cos^k(α)`: im większy, tym węższa i bardziej skupiona plama światła. Aktywny tylko przy „3 lights”.
+- „Light color...” – kolor światła `IL` (domyślnie biały); dotyczy tylko pojedynczego źródła, przy „3 lights” jest nieaktywny.
 - „Stop animation” / „Start animation” – zatrzymuje i wznawia ruch światła.
 
 ## Menu
@@ -208,6 +209,14 @@ L = normalize(Pświatła − P),  V = [0, 0, 1],  R = 2·⟨N, L⟩·N − L
 ```
 
 Przy trzech źródłach światła składniki rozproszony i zwierciadlany są liczone dla każdego źródła osobno (każde ma własne `L` i `R`) i sumowane; wynik powyżej 1 jest obcinany do 1.
+
+Trzy źródła są reflektorami (model Warna): każdy ma oś `D = normalize((0, 0, 0) − Preflektora)`, a do punktu `P` dociera tylko część jego światła:
+
+```
+IL(P) = IL · cos^k(α),  cos(α) = ⟨D, normalize(P − Preflektora)⟩
+```
+
+Na osi reflektora (`α = 0`) światło jest pełne, im dalej od osi, tym słabsze, a od 90° wcale nie dociera (ujemny cosinus → 0). `IL` to tu stały kolor reflektora (czerwony, zielony albo niebieski), a `IL(P)` zastępuje `IL` w obu składnikach wzoru dla danego reflektora; wykładnik `k` ustawia suwak „spot”.
 
 Ujemne cosinusy są zastępowane zerem. Powierzchnie są otwarte, więc oświetlenie jest dwustronne: gdy `N` wskazuje od obserwatora (`N.z < 0`), program używa `−N`.
 

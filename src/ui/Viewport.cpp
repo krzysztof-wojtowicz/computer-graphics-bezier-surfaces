@@ -122,18 +122,25 @@ void Viewport::setM(const float m) {
     update();
 }
 
-QColor Viewport::lightColor() const {
-    const auto [r, g, b] = m_shader.il();
-    return {Shading::float2int(r), Shading::float2int(g), Shading::float2int(b)};
-}
-
-void Viewport::setLightColor(const QColor &color) {
-    assert(color.isValid() && "invalid light color!");
-    m_shader.setIl({
+namespace {
+ShadingColor toShadingColor(const QColor &color) {
+    return {
         .r = Shading::int2float(color.red()),
         .g = Shading::int2float(color.green()),
         .b = Shading::int2float(color.blue())
-    });
+    };
+}
+} // namespace
+
+std::vector<QColor> Viewport::lightColors() const {
+    if (!spotlights()) return {m_lightColor};
+    return {kSpotlightColors.begin(), kSpotlightColors.begin() + m_lightCount};
+}
+
+/// Kept also while the spotlights are on: it comes back with the single light
+void Viewport::setLightColor(const QColor &color) {
+    assert(color.isValid() && "invalid light color!");
+    m_lightColor = color.toRgb();
 
     render();
     update();
@@ -299,6 +306,14 @@ void Viewport::setLightCount(const int count) {
     update();
 }
 
+void Viewport::setSpotExponent(const float k) {
+    assert(k >= Shading::kMinSpotExponent && k <= Shading::kMaxSpotExponent && "spot exponent out of range!");
+    m_shader.setSpotExponent(k);
+
+    render();
+    update();
+}
+
 void Viewport::resetLightPath() {
     const auto points = defaultLightPathPoints(lightZ());
     m_bezierPath = ClosedBezierCurve(points);
@@ -419,6 +434,11 @@ void Viewport::render() {
     // update light positions
     const std::vector<Vec3> lights = lightPositions();
     m_shader.setLightPositions(lights);
+    m_shader.setSpotlights(spotlights());
+    std::vector<ShadingColor> colors;
+    for (const QColor &c: lightColors())
+        colors.push_back(toShadingColor(c));
+    m_shader.setLightColors(colors);
 
     // fill viewport with white color
     m_frame.fill(Qt::white);
@@ -722,9 +742,42 @@ void Viewport::drawLightPathShapes(const Projection &proj, QPainter &painter) co
             painter.drawEllipse(c, kPointRadius, kPointRadius);
     }
 
-    // current light positions
-    painter.setPen(QPen(kLightPathColor, 1));
-    painter.setBrush(lightColor());
-    for (const Vec3 &light: lightPositions())
-        painter.drawEllipse(toScreen(light), kPointRadius * 3, kPointRadius * 3);
+    // current light positions, each in its color; spotlights with an arrow along their beam
+    const std::vector<Vec3> lights = lightPositions();
+    const std::vector<QColor> colors = lightColors();
+    for (std::size_t k = 0; k < lights.size(); ++k) {
+        if (spotlights())
+            drawSpotArrow(proj, painter, lights[k], colors[k]);
+        painter.setPen(QPen(kLightPathColor, 1));
+        painter.setBrush(colors[k]);
+        painter.drawEllipse(toScreen(lights[k]), kPointRadius * 3, kPointRadius * 3);
+    }
+}
+
+/// Arrow from the rim of the light marker along the screen projection of the spotlight axis (towards
+/// Shading::kSpotTarget). Its length is kSpotArrowLength times the horizontal part of the unit axis, so a beam
+/// pointing almost straight down (into the screen) gets a short arrow, and none when exactly down.
+void Viewport::drawSpotArrow(const Projection &proj, QPainter &painter, const Vec3 &light, const QColor &color) const {
+    const Vec3 axis = normalized(Shading::kSpotTarget - light);
+    const float horizontal = std::hypot(axis.x, axis.y);
+    const float length = kSpotArrowLength * horizontal;
+    if (length < 2.0f) return;
+
+    // screen direction of the axis: orthographic projection keeps x and flips y
+    const ScreenPoint from = proj.project(light), to = proj.project(light + axis);
+    const QPointF dir = QPointF(to.x - from.x, to.y - from.y) / std::hypot(to.x - from.x, to.y - from.y);
+    const QPointF centre(from.x, from.y);
+    const QPointF start = centre + dir * (kPointRadius * 3);
+    const QPointF tip = start + dir * static_cast<qreal>(length);
+
+    // arrowhead: two strokes back from the tip, 25 degrees off the shaft
+    constexpr qreal kHead = 8, kHeadAngle = 0.436; // px, radians
+    const auto rotated = [&dir](const qreal angle) {
+        return QPointF(dir.x() * std::cos(angle) - dir.y() * std::sin(angle),
+                       dir.x() * std::sin(angle) + dir.y() * std::cos(angle));
+    };
+    painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::RoundCap));
+    painter.drawLine(start, tip);
+    painter.drawLine(tip, tip - rotated(kHeadAngle) * kHead);
+    painter.drawLine(tip, tip - rotated(-kHeadAngle) * kHead);
 }
