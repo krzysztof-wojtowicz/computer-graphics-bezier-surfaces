@@ -47,6 +47,7 @@ At the start every surface has a solid color, the first built-in texture ("Floor
 
 ### Lighting
 
+- "Light path:" "Bezier" / "B-spline" – the kind of curve the light moves along: a single-segment closed Bézier curve or a closed cubic B-spline (segments in different colors). Both are built on the same control points, edited with the mouse; switching changes only the curve. "B-spline" at the start.
 - "kd", "ks" (from 0 to 1) – share of the diffuse and the specular term.
 - "m" (from 1 to 100) – the larger, the smaller and sharper the highlight.
 - "z" (from 0 to 20) – height of the plane the light curve lies on.
@@ -209,7 +210,12 @@ Negative cosines are replaced by zero. The surfaces are open, so the lighting is
 
 ### Light source
 
-The light is a point light moving along a closed Bézier curve made of `K` cubic segments (`3K` control points; segment `i` is points `3i, 3i+1, 3i+2` and the first point of the next segment). By default it is a circle of radius 4.3 made of 4 segments at the height `z = 8`. The parameter `t` grows by 0.5 segment per second (a full lap in 8 s), computed from real time, not from the number of frames. The curve is bound to the camera.
+The light is a point light moving along a curve built on shared control points – by default the 12 points of the Bézier circle of radius 4.3 made of 4 cubic segments. The switch in the "Lighting" group changes only the kind of curve, the points stay (moving a point changes both curves):
+
+- **Bézier curve** – one segment of degree `n` on `n` points: `V0, …, Vn`, where `Vn = V0` (degree 12 for 12 points). The curve passes only through `V0` (drawn as a square), the other points pull it (circles). Drawn as one dashed line.
+- **B-spline** – closed, uniform, cubic. `n` points give `n` segments; segment `i` depends on points `i−1, i, i+1, i+2` (modulo `n`), so moving a point changes only 4 segments, and the second derivative is continuous also where the curve closes. It doesn't pass through its control points (all drawn as circles). Every segment has its own color – consecutive segments have hues far apart on the color wheel and are brighter and darker in turn, so the joins are visible.
+
+The curves lie at the height `z` (`z = 8` by default). The light position is the part of the lap `t ∈ [0, 1)`, growing by 1/8 per second (a full lap in 8 s on both curves, whatever the number of segments), computed from real time, not from the number of frames. The curves are bound to the camera.
 
 ### Texture and normal map
 

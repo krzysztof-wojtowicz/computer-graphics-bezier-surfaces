@@ -5,6 +5,9 @@
 #include "math/Vec3.h"
 #include "geometry/BezierSurface.h"
 #include "geometry/BezierCurve.h"
+#include "geometry/BSplineCurve.h"
+#include "geometry/ClosedBezierCurve.h"
+#include "geometry/ClosedCurve.h"
 
 #include <QWidget>
 #include <QImage>
@@ -24,6 +27,12 @@
 
 class Viewport : public QWidget {
 public:
+    /// How the light path is built on its control points; both kinds share the same points
+    enum class LightPathType {
+        Bezier, // one closed Bezier segment of degree n on the n points, Vn = V0
+        BSpline // closed cubic B-spline, one segment per point
+    };
+
     /// Range of the light path height (scene units); the scene fits in |P| <= Projection::kSceneRadius
     static constexpr float kMinLightZ = 0.0f;
     static constexpr float kMaxLightZ = 20.0f;
@@ -32,7 +41,8 @@ public:
     /// (and the light marker) inside the scene circle, so they are visible and can be grabbed
     static constexpr float kDefaultLightPathRadius = 4.3f;
     static constexpr float kDefaultLightZ = 8.0f;
-    static constexpr float kLightSpeed = 0.5f; // curve segments per second (4 segments = 8 s per lap)
+    /// Laps per second (8 s per lap): the paths have different numbers of segments, the speed doesn't depend on it
+    static constexpr float kLightSpeed = 0.125f;
     static constexpr float kPickRadius = 8; // px: a press this close to a light path point drags it, else rotates
     /// Surfaces take their settings in turn: surface k uses group k % kColorCount (color, visibility,
     /// texture, normal map), each group has its own tab in the panel
@@ -76,11 +86,16 @@ public:
     [[nodiscard]] bool useNormalMap(int i) const;
     [[nodiscard]] const Texture &normalMap(int i) const;
     /// From the path, not from the shader: valid also before the first render()
-    [[nodiscard]] Vec3 lightPosition() const { return m_lightPath.evaluate(m_lightT); }
+    [[nodiscard]] Vec3 lightPosition() const;
+    /// Part of the lap the light has done, in [0, 1)
     [[nodiscard]] float lightT() const { return m_lightT; }
     [[nodiscard]] bool isAnimating() const { return m_animationTimer.isActive(); }
-    [[nodiscard]] float lightZ() const { return m_lightPath.z(); }
-    [[nodiscard]] const BezierCurve &lightPath() const { return m_lightPath; }
+    [[nodiscard]] float lightZ() const { return lightPath().z(); }
+    [[nodiscard]] LightPathType lightPathType() const { return m_lightPathType; }
+    /// The path of the current type (the light moves along it, the mouse edits it)
+    [[nodiscard]] const ClosedCurve &lightPath() const;
+    /// Color of B-spline segment s of count: neighbours differ in hue, so the segments can be told apart
+    [[nodiscard]] static QColor lightPathSegmentColor(int s, int count);
 
     // --- SETTERS ---
     void setResolution(int n);
@@ -102,7 +117,9 @@ public:
     void setUseNormalMap(int i, bool use);
     void setNormalMap(int i, Texture normalMap);
     void setLightZ(float z);
-    /// Restores the default shape of the light path; keeps its height (set by the z slider) and the light's t
+    /// Switches the curve built on the control points; the points stay. The light keeps its part of the lap.
+    void setLightPathType(LightPathType type);
+    /// Restores the default control points; keeps their height (set by the z slider) and the light's t
     void resetLightPath();
     /// Back to initialRotation(); the light path is bound to the camera, so it doesn't change
     void resetRotation();
@@ -125,9 +142,13 @@ protected:
 private:
     // --- CONST ---
     static constexpr float kPointRadius = 3;
-    static constexpr int kLightPathSamples = 32; // polyline points per curve segment
+    static constexpr int kLightPathSamples = 32; // polyline points per curve segment...
+    static constexpr int kLightPathMinSamples = 128; // ...but at least this many per lap (the degree 6 loop is one segment)
     static constexpr QColor kLightPathColor = QColor(0, 0, 0);
     static constexpr QColor kLightPathPolygonColor = QColor(150, 150, 150);
+    static constexpr int kSegmentLineWidth = 3; // px, B-spline segments: thick enough to show their colors
+    static constexpr int kSegmentBrightValue = 220; // HSV value of even / odd segments: below 255, seen on white
+    static constexpr int kSegmentDarkValue = 130;
     static constexpr int kAnimationIntervalMs = 16; // ~60 fps, real rate depends on render time
     static constexpr float kMaxAnimationStep = 0.1f; // seconds; avoids a jump after the window was blocked
     static inline const Texture kFlatNormalMap = Texture(1, 1, {128, 128, 255}); // N_map ~ [0, 0, 1]
@@ -146,9 +167,14 @@ private:
     std::array<Texture, kColorCount> m_normalMaps = {kFlatNormalMap, kFlatNormalMap, kFlatNormalMap};
     std::array<QColor, kColorCount> m_surfaceColors = kDefaultSurfaceColors; // fill colors, used in turn
     std::array<bool, kColorCount> m_surfaceVisible = {true, true, true}; // per color group, like the colors
-    BezierCurve m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, kDefaultLightZ); // light path for animation
+    // Both curves on the same control points (the 12 points of the 4-segment Bezier circle by default):
+    // every change of the points goes to both, so switching the type only changes the curve
+    ClosedBezierCurve m_bezierPath = ClosedBezierCurve(defaultLightPathPoints(kDefaultLightZ));
+    BSplineCurve m_bsplinePath = BSplineCurve(defaultLightPathPoints(kDefaultLightZ));
+    // B-spline by default: close to the circle of the earlier versions, tests rely on its shape
+    LightPathType m_lightPathType = LightPathType::BSpline;
 
-    float m_lightT = 0.0f; // light position parameter on m_lightPath, kept in [0, segments)
+    float m_lightT = 0.0f; // part of the lap, in [0, 1)
     QTimer m_animationTimer; // fires animation steps
     QElapsedTimer m_animationClock; // real time between steps, so speed doesn't depend on frame rate
     int m_resolution = Mesh::kDefaultResolution; // mesh resolution
@@ -177,5 +203,6 @@ private:
     void drawLightPathShapes(const Projection &proj, QPainter &painter) const;
 
     // --- LIGHT PATH EDITING ---
+    [[nodiscard]] static std::vector<Vec3> defaultLightPathPoints(float z);
     [[nodiscard]] int pickLightPathPoint(const QPointF &pos) const;
 };

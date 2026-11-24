@@ -97,6 +97,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // QSlider works on int: kd and ks in [0, 1] are stored as hundredths, light z as tenths, m in [1, 100] as is
     auto *lightGroup = new QGroupBox("Lighting", panel);
     auto *lightLayout = new QVBoxLayout(lightGroup);
+
+    // how the light path is built; both kinds are edited with the mouse, each keeps its own points
+    auto *pathTypeRow = new QWidget(lightGroup); // own parent: the two radios exclude only each other
+    auto *pathTypeLayout = new QHBoxLayout(pathTypeRow);
+    pathTypeLayout->setContentsMargins(0, 0, 0, 0);
+    pathTypeLayout->addWidget(new QLabel("Light path:", pathTypeRow));
+    auto *bezierPathRadio = new QRadioButton("Bezier", pathTypeRow);
+    bezierPathRadio->setObjectName("bezierPathRadio");
+    auto *bsplinePathRadio = new QRadioButton("B-spline", pathTypeRow);
+    bsplinePathRadio->setObjectName("bsplinePathRadio");
+    pathTypeLayout->addWidget(bezierPathRadio);
+    pathTypeLayout->addWidget(bsplinePathRadio);
+    pathTypeLayout->addStretch();
+    lightLayout->addWidget(pathTypeRow);
+    (m_viewport->lightPathType() == Viewport::LightPathType::Bezier ? bezierPathRadio : bsplinePathRadio)
+        ->setChecked(true);
+    connect(bezierPathRadio, &QRadioButton::toggled, m_viewport, [this](const bool bezier) {
+        m_viewport->setLightPathType(bezier ? Viewport::LightPathType::Bezier : Viewport::LightPathType::BSpline);
+    });
     auto addSlider = [&](const QString &name, const int min, const int max, const float initial,
                          const float scale, void (Viewport::*setter)(float)) {
         const int decimals = scale >= 1.0f ? 0 : scale >= 0.1f ? 1 : 2;

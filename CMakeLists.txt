@@ -31,6 +31,12 @@ add_library(bezier_core STATIC
         src/geometry/Mesh.cpp
         src/geometry/BezierCurve.h
         src/geometry/BezierCurve.cpp
+        src/geometry/ClosedCurve.h
+        src/geometry/ClosedCurve.cpp
+        src/geometry/ClosedBezierCurve.h
+        src/geometry/ClosedBezierCurve.cpp
+        src/geometry/BSplineCurve.h
+        src/geometry/BSplineCurve.cpp
         src/renderer/Projection.h
         src/renderer/MouseRotation.h
         src/renderer/Rasterizer.h

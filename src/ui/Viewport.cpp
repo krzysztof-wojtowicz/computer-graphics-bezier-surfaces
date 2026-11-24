@@ -10,6 +10,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
+#include <iterator>
+#include <numeric>
+#include <vector>
 #include <utility>
 
 #include "renderer/MouseRotation.h"
@@ -35,10 +39,10 @@ void Viewport::setAnimating(const bool on) {
 }
 
 void Viewport::stepAnimation(const float seconds) {
-    const auto segments = static_cast<float>(m_lightPath.segments());
     // wrap so t stays small: float precision of t + dt drops as t grows
-    m_lightT = std::fmod(m_lightT + kLightSpeed * seconds, segments);
-    if (m_lightT < 0) m_lightT += segments;
+    m_lightT = std::fmod(m_lightT + kLightSpeed * seconds, 1.0f);
+    if (m_lightT < 0) m_lightT += 1.0f;
+    if (!(m_lightT < 1.0f)) m_lightT = 0.0f; // tiny negative t + 1 rounds to exactly 1 in float
 
     render(); // render() takes the light position from m_lightT
     update();
@@ -138,7 +142,9 @@ void Viewport::setLightColor(const QColor &color) {
 /// Works also when the animation is stopped: render() takes the light position from the path
 void Viewport::setLightZ(const float z) {
     assert(z >= kMinLightZ && z <= kMaxLightZ && "light z out of range!");
-    m_lightPath.setZ(z);
+    // both paths: the slider sets the height of the light whichever path it follows
+    m_bezierPath.setZ(z);
+    m_bsplinePath.setZ(z);
 
     render();
     update();
@@ -231,8 +237,49 @@ void Viewport::setSurfaceVisible(const int i, const bool visible) {
     update();
 }
 
+void Viewport::setLightPathType(const LightPathType type) {
+    if (type == m_lightPathType) return;
+    m_lightPathType = type;
+    m_draggedPoint = -1; // a drag started on the old curve ends; the points are the same, so nothing else changes
+
+    render();
+    update();
+}
+
+const ClosedCurve &Viewport::lightPath() const {
+    if (m_lightPathType == LightPathType::Bezier) return m_bezierPath;
+    return m_bsplinePath;
+}
+
+std::vector<Vec3> Viewport::defaultLightPathPoints(const float z) {
+    return BezierCurve::circle(kDefaultLightPathRadius, z).points();
+}
+
+/// Neighbouring segments must contrast, so the joins are visible: consecutive segments jump around the hue circle
+/// by a stride coprime with count and close to count / 2 (each hue still used once; for 12 segments 150 degrees,
+/// also between the last and the first), and they alternate between a brighter and a darker shade
+QColor Viewport::lightPathSegmentColor(const int s, const int count) {
+    assert(count >= 1 && s >= 0 && s < count && "segment index out of range!");
+    int stride = 1;
+    for (int k = count / 2; k > 1; --k)
+        if (std::gcd(k, count) == 1) {
+            stride = k;
+            break;
+        }
+    const int hue = 360 * (s * stride % count) / count;
+    return QColor::fromHsv(hue, 255, s % 2 == 0 ? kSegmentBrightValue : kSegmentDarkValue);
+}
+
+/// From the path, not from the shader: valid also before the first render()
+Vec3 Viewport::lightPosition() const {
+    const ClosedCurve &path = lightPath();
+    return path.evaluate(m_lightT * static_cast<float>(path.segments()));
+}
+
 void Viewport::resetLightPath() {
-    m_lightPath = BezierCurve::circle(kDefaultLightPathRadius, lightZ());
+    const auto points = defaultLightPathPoints(lightZ());
+    m_bezierPath = ClosedBezierCurve(points);
+    m_bsplinePath = BSplineCurve(points);
     m_draggedPoint = -1; // a reset during a drag must not keep moving a point of the old curve
 
     render();
@@ -280,7 +327,7 @@ void Viewport::mousePressEvent(QMouseEvent *event) {
     if (m_draggedPoint >= 0) {
         const Projection proj(m_frame.width(), m_frame.height());
         const auto pos = event->position();
-        m_dragOffset = m_lightPath.point(m_draggedPoint)
+        m_dragOffset = lightPath().point(m_draggedPoint)
                        - proj.unproject(static_cast<float>(pos.x()), static_cast<float>(pos.y()), lightZ());
         setCursor(Qt::SizeAllCursor);
     } else {
@@ -300,7 +347,9 @@ void Viewport::mouseMoveEvent(QMouseEvent *event) {
         const float y = std::clamp(static_cast<float>(event->position().y()), 0.0f,
                                    static_cast<float>(m_frame.height() - 1));
         const Vec3 p = proj.unproject(x, y, lightZ()) + m_dragOffset;
-        m_lightPath.movePoint(m_draggedPoint, p.x, p.y);
+        // the points are shared: both curves get the move
+        m_bezierPath.movePoint(m_draggedPoint, p.x, p.y);
+        m_bsplinePath.movePoint(m_draggedPoint, p.x, p.y);
     } else {
         const auto pos = event->position().toPoint();
         const auto delta = pos - m_lastMousePos;
@@ -325,8 +374,9 @@ int Viewport::pickLightPathPoint(const QPointF &pos) const {
     const Projection proj(m_frame.width(), m_frame.height());
     int best = -1;
     float bestDist2 = kPickRadius * kPickRadius;
-    for (int i = 0; i < m_lightPath.size(); ++i) {
-        const ScreenPoint sp = proj.project(m_lightPath.point(i));
+    const ClosedCurve &path = lightPath();
+    for (int i = 0; i < path.size(); ++i) {
+        const ScreenPoint sp = proj.project(path.point(i));
         const float dx = sp.x - static_cast<float>(pos.x());
         const float dy = sp.y - static_cast<float>(pos.y());
         const float dist2 = dx * dx + dy * dy;
@@ -344,7 +394,7 @@ void Viewport::render() {
     if (m_frame.isNull()) return;
 
     // update light position
-    m_shader.setLightPosition(m_lightPath.evaluate(m_lightT));
+    m_shader.setLightPosition(lightPosition());
 
     // fill viewport with white color
     m_frame.fill(Qt::white);
@@ -605,8 +655,9 @@ void Viewport::drawLightPathShapes(const Projection &proj, QPainter &painter) co
         return QPointF(sp.x, sp.y);
     };
 
-    // control polygon: consecutive points, closed (P[3K-1] -> P[0] is the last handle of the last segment)
-    const auto &points = m_lightPath.points();
+    // control polygon: consecutive points, closed (Bezier: V5 -> V6 = V0; B-spline: the last segments use P[0])
+    const ClosedCurve &path = lightPath();
+    const auto &points = path.points();
     QPolygonF polygon;
     for (const auto &p: points)
         polygon << toScreen(p);
@@ -614,18 +665,31 @@ void Viewport::drawLightPathShapes(const Projection &proj, QPainter &painter) co
     painter.setPen(QPen(kLightPathPolygonColor, 1, Qt::DotLine));
     painter.drawPolygon(polygon);
 
-    // the curve itself as a closed polyline
-    QPolygonF curve;
-    for (const auto &p: m_lightPath.sample(kLightPathSamples))
-        curve << toScreen(p);
-    painter.setPen(QPen(kLightPathColor, 1, Qt::DashLine));
-    painter.drawPolygon(curve);
+    // the curve itself: a closed polyline; B-spline segments each in its own color
+    const int perSegment = std::max(kLightPathSamples, kLightPathMinSamples / path.segments());
+    const auto samples = path.sample(perSegment);
+    if (m_lightPathType == LightPathType::BSpline) {
+        const int count = path.segments();
+        for (int s = 0; s < count; ++s) {
+            QPolygonF segment;
+            for (int k = 0; k <= perSegment; ++k) // up to the first sample of the next segment: no gaps
+                segment << toScreen(samples[static_cast<std::size_t>((s * perSegment + k) % std::ssize(samples))]);
+            painter.setPen(QPen(lightPathSegmentColor(s, count), kSegmentLineWidth));
+            painter.drawPolyline(segment);
+        }
+    } else {
+        QPolygonF curve;
+        for (const auto &p: samples)
+            curve << toScreen(p);
+        painter.setPen(QPen(kLightPathColor, 1, Qt::DashLine));
+        painter.drawPolygon(curve);
+    }
 
-    // anchors (on the curve) as squares, handles as circles
+    // points on the curve as squares, points that only pull it as circles
     painter.setPen(QPen(kLightPathColor, 1));
-    for (int i = 0; i < m_lightPath.size(); ++i) {
-        const QPointF c = toScreen(m_lightPath.point(i));
-        const bool anchor = i % 3 == 0;
+    for (int i = 0; i < path.size(); ++i) {
+        const QPointF c = toScreen(path.point(i));
+        const bool anchor = path.passesThrough(i);
         // anchors filled, handles hollow; the grabbed point is filled too
         painter.setBrush(anchor || i == m_draggedPoint ? kLightPathColor : QColor(Qt::white));
         if (anchor)

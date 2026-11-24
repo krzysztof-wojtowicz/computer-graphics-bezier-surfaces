@@ -111,3 +111,62 @@ TEST(BernsteinTest, DerivativesAreAntisymmetric) {
             EXPECT_NEAR(a[i], -b[3 - i], kEps) << "t = " << t << ", i = " << i;
     }
 }
+
+// ---------- bernstein(n, t) ----------
+
+TEST(BernsteinTest, GenericDegreeThreeMatchesBernstein3) {
+    for (const float t : sampleTs()) {
+        const auto a = bernstein(3, t);
+        const auto b = bernstein3(t);
+        for (int i = 0; i < 4; ++i)
+            EXPECT_NEAR(a[i], b[i], kEps) << "t = " << t << ", i = " << i;
+    }
+}
+
+TEST(BernsteinTest, DegreeSixKnownValuesAtMidpoint) {
+    // C(6, i) / 64
+    const auto b = bernstein(6, 0.5f);
+    const std::array<float, 7> binomials{1, 6, 15, 20, 15, 6, 1};
+    for (int i = 0; i <= 6; ++i)
+        EXPECT_FLOAT_EQ(b[i], binomials[i] / 64.0f) << "i = " << i;
+}
+
+TEST(BernsteinTest, DegreeSixEndpoints) {
+    const auto b0 = bernstein(6, 0.0f);
+    const auto b1 = bernstein(6, 1.0f);
+    for (int i = 0; i <= 6; ++i) {
+        EXPECT_FLOAT_EQ(b0[i], i == 0 ? 1.0f : 0.0f) << "B" << i << "(0)";
+        EXPECT_FLOAT_EQ(b1[i], i == 6 ? 1.0f : 0.0f) << "B" << i << "(1)";
+    }
+}
+
+TEST(BernsteinTest, DegreeSixWeightsSumToOneAreNonNegativeAndSymmetric) {
+    for (const float t : sampleTs()) {
+        const auto a = bernstein(6, t);
+        const auto b = bernstein(6, 1.0f - t);
+        float total = 0.0f;
+        for (int i = 0; i <= 6; ++i) {
+            total += a[i];
+            EXPECT_GE(a[i], 0.0f) << "t = " << t << ", i = " << i;
+            EXPECT_NEAR(a[i], b[6 - i], kEps) << "t = " << t << ", i = " << i;
+        }
+        EXPECT_NEAR(total, 1.0f, kEps) << "t = " << t;
+    }
+}
+
+TEST(BernsteinTest, DegreeTwelveSumsToOne) {
+    // the light loop on the 12 points of the default polygon
+    for (const float t : sampleTs()) {
+        const auto b = bernstein(12, t);
+        ASSERT_EQ(b.size(), 13u);
+        float total = 0.0f;
+        for (const float w : b) total += w;
+        EXPECT_NEAR(total, 1.0f, 1e-4f) << "t = " << t;
+    }
+    EXPECT_FLOAT_EQ(bernstein(12, 0.5f)[6], 924.0f / 4096.0f); // C(12, 6) / 2^12
+}
+
+TEST(BernsteinTest, DegreeZeroIsConstantOne) {
+    for (const float t : sampleTs())
+        EXPECT_FLOAT_EQ(bernstein(0, t)[0], 1.0f);
+}

@@ -47,6 +47,7 @@ Na starcie każda powierzchnia ma kolor jednolity, wybraną pierwszą wbudowaną
 
 ### Lighting
 
+- „Light path:” „Bezier” / „B-spline” – rodzaj krzywej, po której porusza się światło: jednosegmentowa zamknięta krzywa Béziera albo zamknięta krzywa B-sklejana (B-spline) stopnia 3 (segmenty w różnych kolorach). Obie są zbudowane na tych samych punktach kontrolnych, edytowanych myszą; przełączenie zmienia tylko krzywą. Na starcie „B-spline”.
 - „kd”, „ks” (od 0 do 1) – udział składowej rozproszonej i zwierciadlanej.
 - „m” (od 1 do 100) – im większe, tym mniejszy i ostrzejszy odblask.
 - „z” (od 0 do 20) – wysokość płaszczyzny, na której leży krzywa światła.
@@ -209,7 +210,12 @@ Ujemne cosinusy są zastępowane zerem. Powierzchnie są otwarte, więc oświetl
 
 ### Źródło światła
 
-Światło jest punktowe i porusza się po zamkniętej krzywej Béziera złożonej z `K` segmentów trzeciego stopnia (`3K` punktów kontrolnych; segment `i` to punkty `3i, 3i+1, 3i+2` i pierwszy punkt następnego segmentu). Domyślnie to okrąg o promieniu 4.3 z 4 segmentów na wysokości `z = 8`. Parametr `t` rośnie o 0.5 segmentu na sekundę (pełne okrążenie w 8 s), liczone z rzeczywistego czasu, a nie z liczby klatek. Krzywa jest związana z kamerą.
+Światło jest punktowe i porusza się po krzywej zbudowanej na wspólnych punktach kontrolnych – domyślnie 12 punktach okręgu Béziera o promieniu 4.3 z 4 segmentów trzeciego stopnia. Przełącznik w grupie „Lighting” zmienia tylko rodzaj krzywej, punkty zostają (przesunięcie punktu działa na obie krzywe):
+
+- **Krzywa Béziera** – jeden segment stopnia `n` na `n` punktach: `V0, …, Vn`, gdzie `Vn = V0` (dla 12 punktów stopień 12). Krzywa przechodzi tylko przez `V0` (rysowany jako kwadrat), pozostałe punkty ją przyciągają (kółka). Rysowana jedną przerywaną linią.
+- **Krzywa B-sklejana (B-spline)** – zamknięta, jednorodna, stopnia 3. `n` punktów daje `n` segmentów; segment `i` zależy od punktów `i−1, i, i+1, i+2` (modulo `n`), więc przesunięcie punktu zmienia tylko 4 segmenty, a krzywa ma ciągłą drugą pochodną także w miejscu zamknięcia. Nie przechodzi przez punkty kontrolne (wszystkie rysowane jako kółka). Każdy segment ma inny kolor – kolejne segmenty mają odcienie odległe na kole barw i na przemian jaśniejsze i ciemniejsze, żeby było widać, gdzie się łączą.
+
+Krzywe leżą na wysokości `z` (domyślnie `z = 8`). Położenie światła to część okrążenia `t ∈ [0, 1)`, rosnąca o 1/8 na sekundę (pełne okrążenie w 8 s na obu krzywych, niezależnie od liczby segmentów), liczona z rzeczywistego czasu, a nie z liczby klatek. Krzywe są związane z kamerą.
 
 ### Tekstura i normal mapa
 

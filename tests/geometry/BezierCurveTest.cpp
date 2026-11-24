@@ -307,7 +307,7 @@ TEST(BezierCurveTest, SampleDoesNotRepeatFirstPoint) {
 
 #if GTEST_HAS_DEATH_TEST && !defined(NDEBUG)
 TEST(BezierCurveDeathTest, RejectsBadPointCount) {
-    EXPECT_DEATH(BezierCurve(std::vector<Vec3>{}), "positive multiple of 3");
+    EXPECT_DEATH(BezierCurve(std::vector<Vec3>{}), "needs control points");
     EXPECT_DEATH(BezierCurve(std::vector<Vec3>(2)), "positive multiple of 3");
     EXPECT_DEATH(BezierCurve(std::vector<Vec3>(4)), "positive multiple of 3");
 }

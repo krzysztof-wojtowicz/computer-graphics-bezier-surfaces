@@ -419,6 +419,37 @@ void sendMouseTo(Viewport &viewport, const QEvent::Type type, const QPoint &pos,
 }
 } // namespace
 
+TEST(MainWindowLightPathTest, PathTypeRadiosMatchViewportAndSwitchIt) {
+    MainWindow window;
+    Viewport *viewport = findViewport(window);
+    auto *bezier = window.findChild<QRadioButton *>("bezierPathRadio");
+    auto *bspline = window.findChild<QRadioButton *>("bsplinePathRadio");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(bezier, nullptr);
+    ASSERT_NE(bspline, nullptr);
+    EXPECT_EQ(bezier->text(), "Bezier");
+    EXPECT_EQ(bspline->text(), "B-spline");
+    EXPECT_EQ(bezier->isChecked(), viewport->lightPathType() == Viewport::LightPathType::Bezier);
+    EXPECT_NE(bezier->isChecked(), bspline->isChecked());
+
+    bezier->click();
+    EXPECT_TRUE(bezier->isChecked());
+    EXPECT_FALSE(bspline->isChecked()) << "the radios exclude each other";
+    EXPECT_EQ(viewport->lightPathType(), Viewport::LightPathType::Bezier);
+    EXPECT_EQ(viewport->lightPath().segments(), 1); // one Bezier segment on all the points
+
+    bspline->click();
+    EXPECT_FALSE(bezier->isChecked());
+    EXPECT_EQ(viewport->lightPathType(), Viewport::LightPathType::BSpline);
+
+    // other radios of the window (surface tabs) don't take part in this group
+    auto *texture = window.findChild<QRadioButton *>("textureRadio1");
+    if (texture != nullptr) {
+        texture->click();
+        EXPECT_TRUE(bspline->isChecked());
+    }
+}
+
 TEST(MainWindowLightPathTest, MenuActionResetsDraggedPath) {
     MainWindow window;
     Viewport *viewport = findViewport(window);
@@ -437,10 +468,12 @@ TEST(MainWindowLightPathTest, MenuActionResetsDraggedPath) {
     sendMouseTo(*viewport, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
     sendMouseTo(*viewport, QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton);
     sendMouseTo(*viewport, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+    // the default path: B-spline on the points of the Bezier circle
     const BezierCurve circle = BezierCurve::circle(Viewport::kDefaultLightPathRadius, viewport->lightZ());
     ASSERT_GT(length(viewport->lightPath().point(1) - circle.point(1)), 0.5f) << "drag didn't move the point";
 
     action->trigger();
+    ASSERT_EQ(viewport->lightPath().size(), circle.size());
     for (int i = 0; i < circle.size(); ++i) {
         const Vec3 d = viewport->lightPath().point(i) - circle.point(i);
         EXPECT_LT(length(d), 1e-5f) << "point " << i;
@@ -1471,7 +1504,7 @@ TEST(MainWindowHelpTest, DocumentedNumbersMatchTheProgram) {
         QString::number(static_cast<double>(Viewport::kPickRadius)) + " px",          // grabbing the light curve
         QString::number(Mesh::kMaxResolution),                                         // n from 1 to 50
         QString::number(static_cast<double>(Viewport::kDefaultLightPathRadius)),       // default light circle
-        QString::number(static_cast<double>(Viewport::kLightSpeed)),                   // segments per second
+        QString::number(static_cast<double>(1.0f / Viewport::kLightSpeed)) + " s",      // time of a lap
         QString::number(static_cast<double>(Projection::kSceneRadius)),                // scale of the projection
     };
     for (const HelpLanguage language : kHelpLanguages) {
